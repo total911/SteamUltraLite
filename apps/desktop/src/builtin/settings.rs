@@ -1071,7 +1071,6 @@ fn folders(ui: &mut Ui, t: &Theme, ctx: &mut Ctx) {
 }
 
 fn about(ui: &mut Ui, t: &Theme) {
-    crate::updater::settings_ui(ui, t);
     group(ui, t, t!("About"), |ui| {
         ui.horizontal(|ui| {
             w::app_icon(ui, t.dense(40.0));

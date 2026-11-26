@@ -1250,11 +1250,6 @@ impl eframe::App for SteamApp {
             ctx.set_zoom_factor(zoom);
             self.applied_zoom = zoom;
         }
-        // Update checks (not in demo/preview runs).
-        if !self.demo {
-            crate::updater::tick(self, &ctx);
-        }
-
         let mut actions = Vec::new();
         {
             let f = *self.flags.lock().unwrap();

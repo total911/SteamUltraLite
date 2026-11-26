@@ -23,7 +23,6 @@ mod shell;
 mod taskbar;
 mod texture_cache;
 mod tray;
-mod updater;
 mod window_icon;
 
 fn main() -> eframe::Result {
@@ -53,11 +52,6 @@ fn main() -> eframe::Result {
             links::Instance::Exit => return Ok(()),
         }
     };
-    // An update downloaded last time installs now, before the app opens.
-    if !separate && updater::apply_pending_on_start() {
-        return Ok(());
-    }
-
     let filter = || tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,eframe=warn,egui_glow=warn".into());
     // STEAMINRUST_LOG_FILE: the log goes to that file too (an app opened
     // from Finder or the Dock has no console to print to).

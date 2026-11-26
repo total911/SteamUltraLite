@@ -591,16 +591,12 @@ fn view_menu(app: &mut SteamApp, ui: &mut Ui, t: &Theme, actions: &mut Vec<Actio
     });
 }
 
-/// "Help": support and updates.
+/// "Help": Steam Support.
 fn help_menu(_app: &mut SteamApp, ui: &mut Ui, t: &Theme, actions: &mut Vec<Action>) {
     let r = text_menu_button(ui, t, t!("Help|menu"), false);
     egui::Popup::menu(&r).width(280.0).show(|ui| {
         if w::menu_item(ui, t, icons::INFO, t!("Steam Support")).clicked() {
             actions.push(Action::Navigate { page: "support".into(), arg: None });
-        }
-        // Like Steam's "Check for Steam Client Updates…".
-        if w::menu_item(ui, t, icons::REFRESH, t!("Check for SteamInRust updates…")).clicked() {
-            crate::updater::check(ui.ctx().clone(), true);
         }
     });
 }
