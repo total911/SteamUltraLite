@@ -80,6 +80,7 @@ pub async fn run(mut cmds: Cmds, sink: Sink) {
                 continue;
             }
             // Signed out (the demo): a call is acted out.
+            #[cfg(feature = "voice")]
             Command::Voice(op) => {
                 crate::voice::offline(op, &sink);
                 continue;
@@ -416,6 +417,7 @@ struct Online {
     /// Games whose pending Steam Cloud upload is running.
     cloud_flushing: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<AppId>>>,
     /// Voice chat: calls and channels.
+    #[cfg(feature = "voice")]
     voice: crate::voice::Voice,
     /// Library collections as last read from Steam.
     collections: crate::collections::Shared,
@@ -528,6 +530,7 @@ async fn online(
         cache_dirty: false,
         cache_saved: std::time::Instant::now(),
         cloud_flushing: Default::default(),
+        #[cfg(feature = "voice")]
         voice: crate::voice::Voice::spawn(sink.clone()),
         collections: Default::default(),
         from_offline: false,
@@ -1483,7 +1486,9 @@ async fn online(
                         tokio::spawn(crate::chat_admin::run(conn, None, me, group, op, sink.clone()));
                     }
                 }
+                #[cfg(feature = "voice")]
                 Some(Command::VoiceConnectionTest) => st.voice.connection_test(st.conn.clone(), sink.clone()),
+                #[cfg(feature = "voice")]
                 Some(Command::Voice(op)) => st.voice.op(op),
                 Some(other) => tracing::debug!("ignored while signed in: {other:?}"),
             },
@@ -1923,6 +1928,7 @@ impl Online {
                     },
                 )?;
             }
+            #[cfg(any(not(feature = "ultralite"), feature = "voice"))]
             emsg::SERVICE_METHOD => {
                 let name = p.header.target_job_name().to_string();
                 if name.starts_with("SteamNotificationClient.NotificationsReceived") {
@@ -1989,9 +1995,11 @@ impl Online {
                         2 => sink(Event::Typing { from: n.steamid_friend() }),
                         _ => {}
                     }
-                } else if self.voice.route(&name, &p, |from| self.friends.get(&from) == Some(&Relationship::Friend) && !matches!(self.persona_state, PersonaState::Invisible | PersonaState::Busy)) {
-                    // Handed to the voice call.
                 } else {
+                    #[cfg(feature = "voice")]
+                    if self.voice.route(&name, &p, |from| self.friends.get(&from) == Some(&Relationship::Friend) && !matches!(self.persona_state, PersonaState::Invisible | PersonaState::Busy)) {
+                        return Ok(None);
+                    }
                     sink(Event::Unhandled { emsg: p.emsg, name });
                 }
             }
@@ -3377,6 +3385,7 @@ impl Online {
             self.save_cache();
         }
         self.conn = Connection::closed();
+        #[cfg(feature = "voice")]
         self.voice.disconnected();
         self.generation += 1;
         self.probing = false;
@@ -3429,20 +3438,24 @@ impl Online {
 
     /// What a fresh connection needs: our status, the game we're in, level
     /// and notifications. Steam sends licenses, friends and personas itself.
-    fn connected(&self, sink: &Sink) {
+    fn connected(&self, _sink: &Sink) {
+        #[cfg(feature = "voice")]
         self.voice.set_connection(self.conn.clone(), self.me);
         let _ = set_persona(&self.conn, self.persona_state);
         if let Some(app) = self.playing {
             let _ = games_played(&self.conn, Some(app));
         }
-        let (conn, sink2) = (self.conn.clone(), sink.clone());
-        tokio::spawn(async move {
-            let r: Result<CPlayerGetGameBadgeLevelsResponse, _> = conn.call("Player.GetGameBadgeLevels#1", &CPlayerGetGameBadgeLevelsRequest { appid: Some(0) }).await;
-            if let Ok(r) = r {
-                sink2(Event::Level(r.player_level()));
-            }
-        });
-        self.load_notifications(sink);
+        #[cfg(any(not(feature = "ultralite"), feature = "voice"))]
+        {
+            let (conn, sink2) = (self.conn.clone(), _sink.clone());
+            tokio::spawn(async move {
+                let r: Result<CPlayerGetGameBadgeLevelsResponse, _> = conn.call("Player.GetGameBadgeLevels#1", &CPlayerGetGameBadgeLevelsRequest { appid: Some(0) }).await;
+                if let Ok(r) = r {
+                    sink2(Event::Level(r.player_level()));
+                }
+            });
+            self.load_notifications(_sink);
+        }
     }
 
     /// Offline mode: the library and friends as they were at the last sign-in.

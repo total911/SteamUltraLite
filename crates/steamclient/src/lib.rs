@@ -36,6 +36,7 @@ mod inventory;
 mod ipc;
 mod jingle;
 mod lobby;
+#[cfg(feature = "overlay")]
 pub mod overlay;
 mod p2p;
 mod pack;
@@ -144,12 +145,10 @@ fn create_interface(version: usize, err: usize) -> usize {
     if p.is_null() && err != 0 {
         unsafe { (err as *mut i32).write_unaligned(1) };
     }
-    if !p.is_null() {
-        // Load the session now so GetAppID and friends are right from the start.
-        if state::ensure_session() {
-            // Draw the Shift+Tab overlay inside the game (see overlay/).
-            overlay::start();
-        }
+    // Load the session now so GetAppID and friends are right from the start.
+    if !p.is_null() && state::ensure_session() {
+        #[cfg(feature = "overlay")]
+        overlay::start();
     }
     p as usize
 }

@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+overlay = ["dep:windows"]
+
 [lib]
 # steam_api64.dll loads this by full path (see client::launch); the file
 # name doesn't matter, the exports do.
@@ -28,7 +31,7 @@ crc32fast = "1"
 
 # The in-game overlay (src/overlay): D3D11 drawing and input inside the game.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
+windows = { version = "0.62", optional = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",

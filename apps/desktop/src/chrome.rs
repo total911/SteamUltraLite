@@ -126,6 +126,7 @@ pub fn resize_handles(ctx: &egui::Context) {
 }
 
 /// A thin border, since a frameless window has none of its own.
+#[cfg(feature = "full")]
 pub fn border(ctx: &egui::Context, t: &Theme) {
     if SYSTEM_FRAME || ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
         return;
@@ -138,6 +139,7 @@ pub fn border(ctx: &egui::Context, t: &Theme) {
 /// Resize handles drawn into `ui` itself (for child windows such as Friends &
 /// Chat, where separate areas end up swallowing clicks). Call it last, so the
 /// thin edge strips sit on top of the window's content.
+#[cfg(feature = "full")]
 pub fn resize_edges(ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     if SYSTEM_FRAME || ctx.input(|i| i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)) {

@@ -14,6 +14,7 @@ pub mod hub;
 pub mod broadcast;
 pub mod feed;
 pub mod community_actions;
+#[cfg(feature = "overlay")]
 pub mod ingame;
 pub mod ipc;
 #[cfg(target_os = "macos")]
@@ -49,6 +50,7 @@ mod session;
 pub mod state;
 pub mod store;
 pub mod chat_admin;
+#[cfg(feature = "voice")]
 pub mod voice;
 pub mod economy;
 pub mod screenshots;
@@ -348,8 +350,10 @@ pub enum Command {
     ChatAdmin { group: u64, op: model::chat_admin::AdminOp },
     /// Check that Valve's voice server accepts a connection. Rings nobody
     /// and joins nothing.
+    #[cfg(feature = "voice")]
     VoiceConnectionTest,
     /// Calls, channels, mute, volumes and audio settings.
+    #[cfg(feature = "voice")]
     Voice(model::voice::VoiceOp),
 }
 
@@ -502,7 +506,9 @@ impl std::fmt::Debug for Command {
             Command::LeaveChatGroup { group } => f.debug_struct("LeaveChatGroup").field("group", group).finish(),
             Command::LogOut => f.write_str("LogOut"),
             Command::ChatAdmin { group, op } => f.debug_struct("ChatAdmin").field("group", group).field("op", op).finish(),
+            #[cfg(feature = "voice")]
             Command::VoiceConnectionTest => f.write_str("VoiceConnectionTest"),
+            #[cfg(feature = "voice")]
             Command::Voice(op) => f.debug_tuple("Voice").field(op).finish(),
         }
     }
@@ -733,7 +739,9 @@ pub enum Event {
     /// What a [`Command::ChatAdmin`] came back with.
     ChatAdmin(model::chat_admin::AdminEvent),
     /// What a [`Command::VoiceConnectionTest`] found.
+    #[cfg(feature = "voice")]
     VoiceConnectionTest(Result<voice::ConnectionTest, String>),
+    #[cfg(feature = "voice")]
     Voice(model::voice::VoiceEvent),
 }
 

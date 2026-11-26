@@ -9,12 +9,17 @@ license.workspace = true
 name = "steam-rs"
 path = "src/main.rs"
 
+[features]
+default = ["ultralite"]
+ultralite = ["client/ultralite"]
+full = ["client/overlay", "client/voice", "dep:egui_extras", "dep:gilrs", "dep:global-hotkey", "dep:plugins", "dep:sha2", "dep:store", "dep:tray-icon", "dep:video", "dep:windows", "dep:raw-window-handle"]
+
 [dependencies]
 client.workspace = true
 extensions.workspace = true
-plugins.workspace = true
-store.workspace = true
-video.workspace = true
+plugins = { workspace = true, optional = true }
+store = { workspace = true, optional = true }
+video = { workspace = true, optional = true }
 local.workspace = true
 vdf.workspace = true
 model.workspace = true
@@ -22,7 +27,7 @@ ui.workspace = true
 i18n.workspace = true
 eframe.workspace = true
 egui.workspace = true
-egui_extras.workspace = true
+egui_extras = { workspace = true, optional = true }
 image.workspace = true
 tokio.workspace = true
 serde.workspace = true
@@ -30,14 +35,14 @@ serde_json.workspace = true
 fs4 = "1"
 qrcode.workspace = true
 rand.workspace = true
-global-hotkey.workspace = true
-tray-icon.workspace = true
+global-hotkey = { workspace = true, optional = true }
+tray-icon = { workspace = true, optional = true }
 rfd = "0.18"
 # Game controllers for Big Picture (Windows, macOS and Linux).
-gilrs = "0.11"
+gilrs = { version = "0.11", optional = true }
 open.workspace = true
 directories.workspace = true
-sha2 = "0.10"
+sha2 = { version = "0.10", optional = true }
 reqwest.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -50,8 +55,8 @@ objc2 = "0.6"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
 # Gaming_Input: to notice a controller being plugged in; Shell + Com: download
 # progress on the taskbar button.
-windows = { version = "0.62", features = ["Gaming_Input", "Foundation_Collections", "Win32_UI_Shell", "Win32_System_Com"] }
-raw-window-handle = "0.6"
+windows = { version = "0.62", optional = true, features = ["Gaming_Input", "Foundation_Collections", "Win32_UI_Shell", "Win32_System_Com"] }
+raw-window-handle = { version = "0.6", optional = true }
 
 [build-dependencies]
 winresource = "0.1"

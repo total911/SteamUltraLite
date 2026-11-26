@@ -19,7 +19,7 @@ ui = { path = "crates/ui" }
 proto = { path = "crates/proto" }
 net = { path = "crates/net" }
 auth = { path = "crates/auth" }
-client = { path = "crates/client" }
+client = { path = "crates/client", default-features = false }
 extensions = { path = "crates/extensions" }
 store = { path = "crates/store" }
 plugins = { path = "crates/plugins" }

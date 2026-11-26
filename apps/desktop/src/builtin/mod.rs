@@ -3,48 +3,78 @@
 //! implements `extensions::Extension` and register it below. For scripts that
 //! users install themselves, see the `plugins` crate.
 
+#[cfg(feature = "full")]
 mod broadcast;
+#[cfg(feature = "full")]
 pub mod community_home;
+#[cfg(feature = "full")]
 pub mod friends;
+#[cfg(feature = "full")]
 pub mod chat;
+#[cfg(feature = "full")]
 pub(crate) mod downloads;
+#[cfg(feature = "full")]
 mod gallery;
+#[cfg(feature = "full")]
 pub mod hub;
+#[cfg(feature = "full")]
 pub(crate) mod inventory;
 pub mod library;
+#[cfg(feature = "full")]
 mod plugins;
+#[cfg(feature = "full")]
 mod support;
+#[cfg(feature = "full")]
 pub(crate) mod profile;
+#[cfg(feature = "full")]
 pub mod screenshots;
+#[cfg(feature = "full")]
 pub mod settings;
+#[cfg(not(feature = "full"))]
+pub mod settings {
+    pub struct AppFlags {
+        pub auto_updates: bool,
+        pub cloud: bool,
+    }
+
+    pub type SharedFlags = std::sync::Arc<std::sync::Mutex<AppFlags>>;
+}
+#[cfg(feature = "full")]
 mod settings_account;
+#[cfg(feature = "full")]
 mod settings_family;
+#[cfg(feature = "full")]
 pub mod store;
+#[cfg(feature = "full")]
 mod workshop;
 
 use extensions::Registry;
 
 pub fn registry(rt: tokio::runtime::Handle, ctx: egui::Context, flags: settings::SharedFlags) -> Registry {
     let mut r = Registry::default();
+    #[cfg(feature = "full")]
     r.register(store::Store::new(rt.clone(), ctx.clone()));
     r.register(library::Library::new(rt.clone(), ctx.clone(), flags.clone()));
-    r.register(community_home::CommunityHome::default());
-    chat::init(rt.clone(), ctx.clone());
-    r.register(friends::Friends::default());
-    profile::set_runtime(rt.clone());
-    r.register(profile::Profile::default());
-    r.register(downloads::Downloads::new(flags.clone()));
-    r.register(workshop::Workshop::default());
-    r.register(hub::Hub::new(rt.clone(), ctx.clone()));
-    r.register(broadcast::Broadcast::new(rt.clone(), ctx.clone()));
-    r.register(inventory::Inventory::default());
-    r.register(support::Support::default());
-    r.register(screenshots::Screenshots::default());
-    r.register(plugins::Plugins::new(rt.clone(), ctx.clone()));
-    r.register(settings::Settings::new(flags));
-    // The design gallery, only when asked for (`--page=gallery`).
-    if std::env::args().any(|a| a == "--page=gallery") {
-        r.register(gallery::Gallery::default());
+    #[cfg(feature = "full")]
+    {
+        r.register(community_home::CommunityHome::default());
+        chat::init(rt.clone(), ctx.clone());
+        r.register(friends::Friends::default());
+        profile::set_runtime(rt.clone());
+        r.register(profile::Profile::default());
+        r.register(downloads::Downloads::new(flags.clone()));
+        r.register(workshop::Workshop::default());
+        r.register(hub::Hub::new(rt.clone(), ctx.clone()));
+        r.register(broadcast::Broadcast::new(rt.clone(), ctx.clone()));
+        r.register(inventory::Inventory::default());
+        r.register(support::Support::default());
+        r.register(screenshots::Screenshots::default());
+        r.register(plugins::Plugins::new(rt.clone(), ctx.clone()));
+        r.register(settings::Settings::new(flags));
+        // The design gallery, only when asked for (`--page=gallery`).
+        if std::env::args().any(|a| a == "--page=gallery") {
+            r.register(gallery::Gallery::default());
+        }
     }
     r
 }
@@ -78,6 +108,7 @@ pub fn entries<'a>(state: &'a client::State, local: &'a local::LocalState) -> Ve
 /// A menu of a SteamID's formats (64-bit, SteamID3, STEAM_0, friend code,
 /// profile link), each with its value; the clicked one is copied. Returns
 /// what was copied, for a "copied" message.
+#[cfg(feature = "full")]
 pub(crate) fn steam_id_menu(ui: &mut egui::Ui, t: &ui::Theme, id: u64) -> Option<String> {
     use ui::widgets as w;
     let c = &t.components.menu_item;
@@ -128,7 +159,7 @@ pub(crate) fn steam_id_menu(ui: &mut egui::Ui, t: &ui::Theme, id: u64) -> Option
     copied
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod tests {
     /// The SteamID menu is wide enough for the whole profile link (it used
     /// to run past the menu's edge).

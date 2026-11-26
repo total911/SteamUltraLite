@@ -576,7 +576,9 @@ impl State {
             Event::CloudSkipped { .. } => {}
             Event::Screenshots(_) => {}
             Event::ChatAdmin(e) => crate::chat_admin::apply(self, e),
+            #[cfg(feature = "voice")]
             Event::VoiceConnectionTest(_) => {}
+            #[cfg(feature = "voice")]
             Event::Voice(e) => match e {
                 model::voice::VoiceEvent::State(v) => self.voice = v.clone(),
                 model::voice::VoiceEvent::Settings(s) => self.voice_settings = s.clone(),

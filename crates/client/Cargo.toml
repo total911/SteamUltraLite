@@ -5,6 +5,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+overlay = []
+ultralite = []
+voice = ["dep:voice"]
+
+[[example]]
+name = "voice_connection_test"
+required-features = ["voice"]
+
 [dependencies]
 net.workspace = true
 auth.workspace = true
@@ -22,7 +32,7 @@ directories.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 depot.workspace = true
-voice.workspace = true
+voice = { workspace = true, optional = true }
 futures-util.workspace = true
 rand.workspace = true
 sha1 = "0.10"

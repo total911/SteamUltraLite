@@ -1,28 +1,50 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(not(feature = "full"))]
+#[path = "ultralite/app.rs"]
 mod app;
+#[cfg(feature = "full")]
+mod app;
+#[cfg(feature = "full")]
 mod bigpicture;
 mod builtin;
 mod chrome;
+#[cfg(not(feature = "full"))]
+#[path = "ultralite/demo.rs"]
 mod demo;
+#[cfg(feature = "full")]
+mod demo;
+#[cfg(feature = "full")]
 mod friends_window;
+#[cfg(feature = "full")]
 mod image_cache;
+#[cfg(feature = "full")]
 mod sized_images;
+#[cfg(feature = "full")]
 mod ingame;
+#[cfg(feature = "full")]
 mod launch_popup;
+#[cfg(feature = "full")]
 mod launch_question;
 mod links;
+#[cfg(feature = "full")]
 mod memlog;
 mod login;
 #[cfg(target_os = "macos")]
 mod mac_permissions;
 mod offline_ui;
+#[cfg(feature = "full")]
 mod overlay;
+#[cfg(feature = "full")]
 mod shell;
+#[cfg(feature = "full")]
 mod taskbar;
+#[cfg(feature = "full")]
 mod texture_cache;
+#[cfg(feature = "full")]
 mod tray;
+#[cfg(feature = "full")]
 mod window_icon;
 
 fn main() -> eframe::Result {
@@ -39,7 +61,8 @@ fn main() -> eframe::Result {
     #[cfg(target_os = "macos")]
     links::install_url_handler();
     // `--separate` runs a second copy (for previews and testing).
-    let separate = std::env::args().any(|a| a == "--separate");
+    let separate = std::env::args().any(|a| a == "--separate")
+        || (!cfg!(feature = "full") && app::demo());
     // Only one copy runs: a later one (a desktop shortcut clicked twice, a
     // game started while the app is still opening) hands its link over and
     // exits instead of becoming a second app with a second tray icon. The
@@ -89,5 +112,6 @@ fn main() -> eframe::Result {
             .with_icon(std::sync::Arc::new(egui::IconData { rgba: ui::brand::icon_rgba(256), width: 256, height: 256 })),
         ..Default::default()
     };
-    eframe::run_native("SteamInRust", options, Box::new(move |cc| Ok(Box::new(app::SteamApp::new(cc, link)))))
+    let app_name = if cfg!(feature = "full") { "SteamInRust" } else { "SteamUltraLite" };
+    eframe::run_native(app_name, options, Box::new(move |cc| Ok(Box::new(app::SteamApp::new(cc, link)))))
 }

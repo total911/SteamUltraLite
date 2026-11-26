@@ -52,12 +52,14 @@ pub fn open_http(url: &str) -> bool {
 }
 
 /// Validate a YouTube video ID (`[A-Za-z0-9_-]+`).
+#[cfg(any(feature = "full", test))]
 pub fn valid_youtube_id(id: &str) -> Option<&str> {
     let id = id.trim();
     (!id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')).then_some(id)
 }
 
 /// Open a validated YouTube video ID on `youtube.com`.
+#[cfg(feature = "full")]
 pub fn open_youtube(id: &str) -> bool {
     let Some(id) = valid_youtube_id(id) else { return false };
     open_http(&format!("https://www.youtube.com/watch?v={id}"))
@@ -337,39 +339,41 @@ pub fn listen(ctx: egui::Context) -> mpsc::Receiver<String> {
     rx
 }
 
+#[cfg(any(feature = "full", not(windows)))]
 fn exe() -> String {
     std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default()
 }
 
+#[cfg(any(feature = "full", target_os = "macos"))]
 fn config_backup() -> PathBuf {
     client::store::config_dir().join("steam-protocol-backup.txt")
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "full"))]
 fn reg(args: &[&str]) -> Option<String> {
     use std::os::windows::process::CommandExt;
     let out = std::process::Command::new("reg").args(args).creation_flags(0x0800_0000).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "full"))]
 const KEY: &str = r"HKCU\Software\Classes\steam\shell\open\command";
 
 /// The command currently registered for `steam://` links, if any.
-#[cfg(windows)]
+#[cfg(all(windows, feature = "full"))]
 pub fn current_handler() -> Option<String> {
     let out = reg(&["query", KEY, "/ve"])?;
     let line = out.lines().find(|l| l.contains("REG_SZ"))?;
     Some(line.split("REG_SZ").nth(1)?.trim().to_string())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "full"))]
 pub fn is_default_handler() -> bool {
     current_handler().is_some_and(|h| h.to_lowercase().contains(&exe().to_lowercase()))
 }
 
 /// Make SteamInRust open `steam://` links (saves the old handler first).
-#[cfg(windows)]
+#[cfg(all(windows, feature = "full"))]
 pub fn register() -> Result<(), String> {
     if let Some(old) = current_handler().filter(|h| !h.to_lowercase().contains(&exe().to_lowercase())) {
         let _ = std::fs::create_dir_all(client::store::config_dir());
@@ -383,7 +387,7 @@ pub fn register() -> Result<(), String> {
 }
 
 /// Give `steam://` links back to whatever handled them before.
-#[cfg(windows)]
+#[cfg(all(windows, feature = "full"))]
 pub fn unregister() -> Result<(), String> {
     match std::fs::read_to_string(config_backup()) {
         Ok(old) if !old.trim().is_empty() => {
@@ -677,6 +681,7 @@ mod url_tests {
     #[test]
     fn file_image_loader_is_disabled() {
         let ctx = egui::Context::default();
+        #[cfg(feature = "full")]
         egui_extras::install_image_loaders(&ctx);
         for uri in ["file:///etc/passwd", "file://attacker/share/pwn.png", "https://example.com/a.svg"] {
             let res = ctx.try_load_bytes(uri);

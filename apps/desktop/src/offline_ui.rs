@@ -5,7 +5,9 @@
 
 use crate::app::SteamApp;
 use client::{Command, Event, Link};
-use egui::{Align2, Color32, CornerRadius, Margin, Sense, Stroke, Ui, vec2};
+use egui::{Color32, Margin, Ui};
+#[cfg(feature = "full")]
+use egui::{Align2, CornerRadius, Sense, Stroke, vec2};
 use i18n::t;
 use ui::{Theme, icons, widgets as w};
 
@@ -18,8 +20,10 @@ pub struct ConnectionError {
 }
 
 /// Pages that only work with a connection to Steam.
+#[cfg(feature = "full")]
 const NEEDS_STEAM: &[&str] = &["store", "community", "profile", "inventory", "workshop", "support"];
 
+#[cfg(feature = "full")]
 fn needs_steam(page: &str) -> bool {
     NEEDS_STEAM.contains(&page) || crate::builtin::hub::PAGES.contains(&page)
 }
@@ -119,8 +123,13 @@ pub fn connection_error(app: &mut SteamApp, ui: &mut Ui, t: &Theme, err: &Connec
                 let label = t!("Next time, start in offline mode by itself when Steam can't be reached");
                 let row_w = 40.0 + 10.0 + ui.painter().layout_no_wrap(label.to_string(), w::font(12.5), t.text).size().x;
                 ui.add_space(((ui.available_width() - row_w) / 2.0).max(0.0));
-                ui.add(crate::builtin::settings::toggle(&mut app.prefs.auto_offline));
-                ui.label(w::text(label, 12.5, t.text_dim));
+                #[cfg(feature = "full")]
+                {
+                    ui.add(crate::builtin::settings::toggle(&mut app.prefs.auto_offline));
+                    ui.label(w::text(label, 12.5, t.text_dim));
+                }
+                #[cfg(not(feature = "full"))]
+                ui.checkbox(&mut app.prefs.auto_offline, label);
             });
         } else {
             ui.label(w::text(t!("Offline mode needs one online sign-in on this PC first."), 12.5, t.text_faint));
@@ -139,6 +148,7 @@ pub fn connection_error(app: &mut SteamApp, ui: &mut Ui, t: &Theme, err: &Connec
 
 /// "Offline" / "Reconnecting…" in the top bar (nothing while online).
 /// Clicking it tries to connect now.
+#[cfg(feature = "full")]
 pub fn badge(app: &mut SteamApp, ui: &mut Ui, t: &Theme) {
     let (label, tip, color) = match app.state.link {
         Link::Online => return,
@@ -189,6 +199,7 @@ pub fn account_items(app: &mut SteamApp, ui: &mut Ui, t: &Theme) {
 
 /// A page that needs Steam, while offline: "You're offline" instead.
 /// Returns true when it drew the page.
+#[cfg(feature = "full")]
 pub fn page(app: &mut SteamApp, ui: &mut Ui, page: &str) -> bool {
     if app.state.online() || !needs_steam(page) {
         return false;
@@ -229,6 +240,7 @@ fn notice(ui: &mut Ui, t: &Theme, text: String) {
 }
 
 /// Friends while offline: their status is unknown.
+#[cfg(feature = "full")]
 pub fn friends_notice(app: &SteamApp, ui: &mut Ui, t: &Theme) {
     match app.state.link {
         Link::Online => {}
@@ -248,6 +260,7 @@ pub fn downloads_notice(app: &SteamApp, ui: &mut Ui, t: &Theme) {
 
 /// Play time on a game's page, with time played offline in SteamInRust
 /// that Steam doesn't have yet.
+#[cfg(feature = "full")]
 pub fn playtime_value(state: &client::State, app_id: model::AppId, steam_minutes: Option<u64>) -> (String, Option<String>) {
     let (offline_total, not_sent) = state.offline_playtime.get(&app_id).copied().unwrap_or((0, 0));
     let extra = not_sent / 60;
@@ -266,6 +279,7 @@ pub fn playtime_value(state: &client::State, app_id: model::AppId, steam_minutes
 }
 
 /// Draw a small "cloud upload waiting" mark on a game page's play bar.
+#[cfg(feature = "full")]
 pub fn cloud_pending(ui: &mut Ui, t: &Theme, state: &client::State, app_id: model::AppId) {
     if !state.cloud_pending.contains(&app_id) {
         return;

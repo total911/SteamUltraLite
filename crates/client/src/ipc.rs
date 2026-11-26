@@ -85,14 +85,14 @@ impl Server {
         let tokens: Tokens = Arc::default();
         let (tx, rx) = mpsc::unbounded_channel();
         // Also the in-game overlay's pipe, which checks the same launch tokens.
-        #[cfg(windows)]
+        #[cfg(all(windows, feature = "overlay"))]
         let task = {
             let t = tokens.clone();
             let overlay = crate::ingame::accept(name.clone(), move |token| t.lock().unwrap().get(token).map(|s| s.app_id));
             let games = accept(name.clone(), tokens.clone(), tx);
             Some(tokio::spawn(async move { tokio::join!(games, overlay) }).abort_handle())
         };
-        #[cfg(unix)]
+        #[cfg(any(unix, all(windows, not(feature = "overlay"))))]
         let task = Some(tokio::spawn(accept(name.clone(), tokens.clone(), tx)).abort_handle());
         #[cfg(not(any(windows, unix)))]
         let task = {
