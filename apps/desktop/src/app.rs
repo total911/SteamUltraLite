@@ -416,6 +416,8 @@ impl SteamApp {
         let flag = |name: &str| std::env::args().find_map(|a| a.strip_prefix(&format!("--{name}=")).map(String::from));
         if let Some(page) = flag("page") {
             app.go(page, flag("arg"));
+        } else {
+            app.go("library".into(), None);
         }
         // `--search=dota --search-select=0`: the app-wide search with that
         // text and its results open, a row selected (previews).
@@ -468,16 +470,17 @@ impl SteamApp {
 
     fn drain_events(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let now = ctx.input(|i| i.time);
+        let show_social_toasts = !crate::shell::compact_page(&self.prefs.page);
         while let Ok(e) = self.events.try_recv() {
             // Toast-worthy things are decided before state changes.
             if let Event::Message(m) = &e {
                 let open = self.friends_window.showing_chat(m.friend);
-                if m.from != self.state.steam_id && !open && self.prefs.toast_messages {
+                if show_social_toasts && m.from != self.state.steam_id && !open && self.prefs.toast_messages {
                     let name = self.state.persona(m.from).name;
                     self.toast(now, name, m.text.clone());
                 }
             }
-            if let (Event::NotificationsArrived(list), true) = (&e, self.prefs.toast_notifications) {
+            if let (Event::NotificationsArrived(list), true) = (&e, show_social_toasts && self.prefs.toast_notifications) {
                 for n in list.iter().filter(|n| !n.read).take(3) {
                     let (_, text) = crate::shell::notification_text(&self.state, n);
                     self.toast(now, i18n::tr_dyn("Notification"), text);
@@ -1327,7 +1330,7 @@ impl eframe::App for SteamApp {
         self.bigpicture_was_on = big_picture;
         if self.window_mode != Some(mode) {
             self.window_mode = Some(mode);
-            let main_size = window_size_flag().unwrap_or([1440.0, 900.0]);
+            let main_size = window_size_flag().unwrap_or([1060.0, 700.0]);
             let (size, min, resizable) = match mode {
                 WindowMode::Main => (main_size, [1060.0, 680.0], true),
                 WindowMode::SignIn => ([720.0, 470.0], [720.0, 470.0], false),
@@ -1368,7 +1371,9 @@ impl eframe::App for SteamApp {
             }
             crate::shell::activate_dialog(self, &ctx);
             crate::shell::friend_dialogs(self, &ctx);
-            crate::shell::new_look_prompt(self, &ctx, &mut actions);
+            if !crate::shell::compact_page(&self.prefs.page) {
+                crate::shell::new_look_prompt(self, &ctx, &mut actions);
+            }
             crate::friends_window::show(self, &ctx, &mut actions);
             crate::overlay::show(self, &ctx, &mut actions);
             crate::launch_popup::show(self, &ctx);

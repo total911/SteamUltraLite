@@ -17,6 +17,10 @@ use ui::{Theme, icons, widgets as w};
 /// the page. `docs/themes.md` lists the
 /// options; `docs/redesign.md` describes the default layout.
 pub fn show(app: &mut SteamApp, ui: &mut Ui, actions: &mut Vec<Action>) {
+    if compact_page(&app.prefs.page) {
+        compact(app, ui, actions);
+        return;
+    }
     let t = app.prefs.theme.clone();
     let lay = t.layout.clone();
 
@@ -84,6 +88,54 @@ pub fn show(app: &mut SteamApp, ui: &mut Ui, actions: &mut Vec<Action>) {
             w::empty(ui, &t, icons::WARNING, "Page not found", &page);
         }
     });
+}
+
+pub(crate) fn compact_page(page: &str) -> bool {
+    matches!(page, "library" | "downloads" | "settings")
+}
+
+fn compact(app: &mut SteamApp, ui: &mut Ui, actions: &mut Vec<Action>) {
+    let page = app.prefs.page.clone();
+    let theme = app.prefs.theme.clone();
+    egui::Panel::top("compact-navigation").exact_size(40.0).resizable(false).show(ui, |ui| {
+        crate::chrome::drag_area(ui, ui.max_rect(), true);
+        ui.horizontal_centered(|ui| {
+            crate::chrome::traffic_light_space(ui);
+            for (id, label) in [("library", t!("Library")), ("downloads", t!("Downloads")), ("settings", t!("Settings"))] {
+                if ui.selectable_label(page == id, label).clicked() && page != id {
+                    actions.push(Action::Navigate { page: id.into(), arg: None });
+                }
+            }
+            if let Some((_, fraction, paused)) = active_download(app) {
+                let status = if paused { t!("Paused") } else { t!("Downloading") };
+                ui.label(format!("{status} {:.0}%", fraction * 100.0));
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                crate::chrome::window_buttons(ui, &theme, 36.0, true);
+                if ui.button(t!("Exit")).clicked() {
+                    app.request_exit(ui.ctx());
+                }
+                if ui.button(t!("Sign out")).clicked() && !app.demo {
+                    app.client.send(Command::LogOut);
+                }
+                let status = match app.state.link {
+                    client::Link::Online => t!("Online"),
+                    client::Link::Offline => t!("Offline"),
+                    client::Link::Reconnecting { .. } => t!("Reconnecting…"),
+                };
+                ui.menu_button(status, |ui| crate::offline_ui::account_items(app, ui, &theme));
+            });
+        });
+    });
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(theme.bg).inner_margin(Margin::same(14)))
+        .show(ui, |ui| {
+            if page == "downloads" {
+                crate::offline_ui::downloads_notice(app, ui, &theme);
+            }
+            let env = Env { state: &app.state, local: &app.local, theme: &theme, zoom: app.prefs.zoom, client: &app.client, actions };
+            app.registry.show_page(&page, ui, env);
+        });
 }
 
 /// A bar's fill from its component style, with its `border` color as a

@@ -79,7 +79,7 @@ fn main() -> eframe::Result {
         persist_window: !app::offscreen(),
         // Our own title bar (see chrome.rs) instead of the Windows one.
         viewport: chrome::frame(viewport)
-            .with_title("SteamInRust")
+            .with_title("SteamUltraLite")
             // Starts at sign-in size; the app resizes itself after sign-in.
             .with_inner_size([720.0, 470.0])
             // macOS: the GL setup is chosen with the first window; only a

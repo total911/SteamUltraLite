@@ -66,8 +66,9 @@ pub fn entries<'a>(state: &'a client::State, local: &'a local::LocalState) -> Ve
             out.push(Entry { app_id: a.app_id, name: &a.name, installed: installed.get(&a.app_id).copied(), owned: Some(a) });
         }
     }
+    let mut ids: std::collections::HashSet<_> = out.iter().map(|entry| entry.app_id).collect();
     for g in &local.games {
-        if !out.iter().any(|e| e.app_id == g.app_id) {
+        if ids.insert(g.app_id) {
             out.push(Entry { app_id: g.app_id, name: &g.name, installed: Some(g), owned: None });
         }
     }

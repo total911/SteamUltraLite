@@ -4,6 +4,8 @@ use ui::widgets::EditMenu;
 use i18n::t;
 use super::{Entry, entries};
 
+#[path = "library_compact.rs"]
+mod compact;
 #[path = "library_news.rs"]
 mod news;
 #[path = "library_props.rs"]
@@ -136,9 +138,9 @@ enum Tab {
 #[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 enum View {
     /// What's new, recent games, then every game.
-    #[default]
     Home,
     Grid,
+    #[default]
     List,
 }
 
@@ -273,6 +275,7 @@ pub struct Library {
     selected: Option<AppId>,
     search: String,
     filter: Filter,
+    favorites_only: bool,
     sort: Sort,
     tile: f32,
     games: HashMap<AppId, GameSettings>,
@@ -442,6 +445,10 @@ impl Extension for Library {
         self.sync_steam_shortcuts(ctx);
         self.downloading = ctx.state.downloads.values().filter(|d| !matches!(d.phase, model::DownloadPhase::Done | model::DownloadPhase::Failed)).map(|d| (d.app_id, d.paused)).collect();
         self.queued = ctx.state.download_queue.iter().copied().collect();
+        if self.view == View::List && self.tab == Tab::Home {
+            self.compact_page(ui, &t, ctx);
+            return;
+        }
         if self.tile == 0.0 {
             self.tile = TILE;
         }
@@ -498,7 +505,7 @@ impl Extension for Library {
     fn load(&mut self, data: &str) {
         let saved: Saved = serde_json::from_str(data).unwrap_or_default();
         self.tile = if saved.tile > 0.0 { saved.tile } else { TILE };
-        self.view = saved.view;
+        self.view = View::List;
         self.games = saved.games;
         self.favorites = saved.favorites;
         self.hidden = saved.hidden;
@@ -1065,7 +1072,7 @@ impl Library {
                 && self.adv_match(state, e)
         });
         match self.sort {
-            Sort::Name => items.sort_by_key(|e| e.name.to_lowercase()),
+            Sort::Name => items.sort_by_cached_key(|e| (e.name.to_lowercase(), e.app_id)),
             Sort::Recent => items.sort_by_key(|e| std::cmp::Reverse(e.installed.and_then(|g| g.last_played).or_else(|| self.shortcut_played(e.app_id)))),
             Sort::Playtime => items.sort_by_key(|e| std::cmp::Reverse(e.installed.and_then(|g| g.playtime_minutes))),
             Sort::Size => items.sort_by_key(|e| std::cmp::Reverse(e.installed.map(|g| g.size_on_disk))),
