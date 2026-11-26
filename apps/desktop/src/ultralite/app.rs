@@ -93,6 +93,8 @@ impl SteamApp {
         let lang = std::env::args().find_map(|arg| arg.strip_prefix("--lang=").and_then(Lang::from_code));
         i18n::set_language(lang.or_else(|| prefs.language.as_deref().and_then(Lang::from_code)).unwrap_or_else(Lang::detect));
         ui::install_fonts(&cc.egui_ctx);
+        let theme = if prefs.theme.dark { egui::Theme::Dark } else { egui::Theme::Light };
+        cc.egui_ctx.set_theme(theme);
         prefs.theme.apply(&cc.egui_ctx);
 
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("tokio runtime");
