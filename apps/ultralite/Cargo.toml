@@ -1,0 +1,16 @@
+[package]
+name = "steam-ultralite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow"] }
+sys-locale.workspace = true
+vdf.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming"] }
+
+[dev-dependencies]
+tempfile = "3"

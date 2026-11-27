@@ -5800,6 +5800,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "steam-ultralite"
+version = "0.15.0"
+dependencies = [
+ "eframe",
+ "sys-locale",
+ "tempfile",
+ "vdf",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "steamclient"
 version = "0.15.0"
 dependencies = [
