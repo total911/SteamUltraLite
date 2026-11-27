@@ -115,7 +115,25 @@ fn parse_game(id: u32, metadata: &str) -> Option<Game> {
         return None;
     }
     let name = common.str("name")?.trim();
-    (!name.is_empty()).then(|| Game::new(id, name))
+    if name.is_empty() { return None; }
+    let mut game = Game::new(id, name);
+    let associations = common.obj("associations");
+    let names = |kind: &str| -> Option<String> {
+        let values: Vec<_> = associations.into_iter().flat_map(vdf::Obj::iter)
+            .filter_map(|(_, value)| value.as_obj())
+            .filter(|value| value.str("type").is_some_and(|value| value.eq_ignore_ascii_case(kind)))
+            .filter_map(|value| value.str("name"))
+            .filter(|value| !value.trim().is_empty())
+            .collect();
+        (!values.is_empty()).then(|| values.join(", "))
+    };
+    game.developer = names("developer").or_else(|| common.str("developer").map(str::to_owned));
+    game.publisher = names("publisher").or_else(|| common.str("publisher").map(str::to_owned));
+    if let Some(categories) = common.obj("category") {
+        game.achievements = Some(categories.get("category_22").is_some());
+        game.cards = Some(categories.get("category_29").is_some());
+    }
+    Some(game)
 }
 
 fn content_host(host: &str) -> bool {
@@ -178,5 +196,14 @@ mod tests {
         let sha = Sha1::digest(&text);
         assert_eq!(decode_metadata(text.clone(), &sha).as_deref().and_then(|text| parse_game(42, text)).unwrap().name, "Example");
         assert!(decode_metadata(text, &[0; 20]).is_none());
+        let detailed = r#""appinfo" { "common" { "type" "Game" "name" "Example"
+            "associations" { "0" { "type" "developer" "name" "Studio" }
+                             "1" { "type" "publisher" "name" "Publisher" } }
+            "category" { "category_22" "1" "category_29" "1" } } }"#;
+        let game = parse_game(42, detailed).unwrap();
+        assert_eq!(game.developer.as_deref(), Some("Studio"));
+        assert_eq!(game.publisher.as_deref(), Some("Publisher"));
+        assert_eq!(game.achievements, Some(true));
+        assert_eq!(game.cards, Some(true));
     }
 }

@@ -30,10 +30,11 @@ impl View {
 
 struct App {
     russian: bool,
-    root: String,
+    roots: Vec<PathBuf>,
     account: account::Account,
     installed: Vec<Game>,
     view: View,
+    selected: Option<u32>,
     query: String,
     visible: Vec<usize>,
     problem: Option<String>,
@@ -43,32 +44,33 @@ struct App {
 impl App {
     fn new(ctx: &egui::Context) -> Self {
         let russian = sys_locale::get_locale().is_some_and(|locale| locale.starts_with("ru"));
-        let root = library::default_root().map(|path| path.to_string_lossy().into_owned()).unwrap_or_default();
+        let roots = load_roots();
         let mut app = Self {
             russian,
-            root,
+            roots,
             account: account::Account::default(),
             installed: Vec::new(),
             view: View::Installed,
+            selected: None,
             query: String::new(),
             visible: Vec::new(),
             problem: None,
             scan: None,
         };
-        if !app.root.is_empty() {
+        if !app.roots.is_empty() {
             app.scan(ctx);
         }
         app
     }
 
     fn scan(&mut self, ctx: &egui::Context) {
-        let root = PathBuf::from(self.root.trim());
+        let roots = self.roots.clone();
         let (sender, receiver) = channel();
         let repaint = ctx.clone();
         self.problem = None;
         self.scan = Some(receiver);
         std::thread::spawn(move || {
-            let _ = sender.send(library::scan(&root));
+            let _ = sender.send(library::scan_roots(&roots));
             repaint.request_repaint();
         });
     }
@@ -104,25 +106,119 @@ impl App {
     fn set_view(&mut self, view: View) {
         if self.view != view {
             self.view = view;
+            self.selected = None;
             self.refresh_visible();
         }
     }
 
-    fn folder_ui(&mut self, ui: &mut egui::Ui) {
+    fn selected_game(&self) -> Option<Game> {
+        let mut game = self.games().iter().find(|game| Some(game.id) == self.selected)?.clone();
+        if self.view == View::Installed {
+            if let Some(owned) = self.account.games().iter().find(|owned| owned.id == game.id) {
+                game.developer = owned.developer.clone();
+                game.publisher = owned.publisher.clone();
+                game.achievements = owned.achievements;
+                game.cards = owned.cards;
+                game.playtime_minutes = owned.playtime_minutes;
+                game.achievement_progress = owned.achievement_progress;
+            }
+        }
+        Some(game)
+    }
+
+    fn add_folder(&mut self, ctx: &egui::Context) {
+        let Some(mut path) = rfd::FileDialog::new().pick_folder() else { return };
+        if path.file_name().is_some_and(|name| name.eq_ignore_ascii_case("steamapps")) {
+            path.pop();
+        }
+        if !library::valid_root(&path) {
+            self.problem = Some(if self.russian {
+                "Выбери папку библиотеки Steam, содержащую steamapps".into()
+            } else {
+                "Choose a Steam library folder containing steamapps".into()
+            });
+            return;
+        }
+        if !self.roots.iter().any(|root| root.to_string_lossy().eq_ignore_ascii_case(&path.to_string_lossy())) {
+            self.roots.push(path);
+            save_roots(&self.roots);
+            self.scan(ctx);
+        }
+    }
+
+    fn folders_ui(&mut self, ui: &mut egui::Ui) {
         let russian = self.russian;
         ui.horizontal(|ui| {
-            ui.label(if russian { "Папка Steam" } else { "Steam folder" });
-            let root = ui.add_enabled(
-                self.scan.is_none(),
-                TextEdit::singleline(&mut self.root).desired_width(280.0),
-            );
-            let enabled = self.scan.is_none() && !self.root.trim().is_empty();
-            let button = ui.add_enabled(enabled, egui::Button::new(if russian { "Читать" } else { "Scan" }));
-            let enter = root.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if button.clicked() || enabled && enter {
-                self.scan(ui.ctx());
+            ui.label(if russian { "Папки Steam" } else { "Steam folders" });
+            if ui.add_enabled(self.scan.is_none(), egui::Button::new(if russian { "Обзор…" } else { "Browse…" })).clicked() {
+                self.add_folder(ui.ctx());
             }
         });
+        let mut remove = None;
+        for (index, root) in self.roots.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if ui.add_enabled(self.scan.is_none(), egui::Button::new("×"))
+                    .on_hover_text(if russian { "Убрать из списка; файлы останутся" } else { "Remove from list; files stay" })
+                    .clicked()
+                {
+                    remove = Some(index);
+                }
+                ui.label(root.display().to_string());
+            });
+        }
+        if let Some(index) = remove {
+            self.roots.remove(index);
+            save_roots(&self.roots);
+            self.scan(ui.ctx());
+        }
+    }
+
+    fn details_ui(&mut self, ui: &mut egui::Ui, game: &Game) {
+        let russian = self.russian;
+        let text = |ru: &'static str, en: &'static str| if russian { ru } else { en };
+        let unknown = text("Нет данных", "Unknown");
+        ui.heading(&game.name);
+        ui.separator();
+        ui.label(format!("{}: {}", text("Разработчик", "Developer"), game.developer.as_deref().unwrap_or(unknown)));
+        ui.label(format!("{}: {}", text("Издатель", "Publisher"), game.publisher.as_deref().unwrap_or(unknown)));
+        ui.label(format!("Steam AppID: {}", game.id));
+        let availability = |value: Option<bool>| match value {
+            Some(true) => text("Есть", "Available"),
+            Some(false) => text("Нет", "None"),
+            None => unknown,
+        };
+        ui.label(format!("{}: {}", text("Достижения", "Achievements"), availability(game.achievements)));
+        ui.label(format!("{}: {}", text("Карточки Steam", "Steam Trading Cards"), availability(game.cards)));
+        if self.view == View::Installed {
+            if let Some(minutes) = game.playtime_minutes {
+                ui.label(if russian { format!("Время в игре: {} ч {} мин", minutes / 60, minutes % 60) } else { format!("Playtime: {} h {} min", minutes / 60, minutes % 60) });
+            } else {
+                ui.label(format!("{}: {}", text("Время в игре", "Playtime"), unknown));
+            }
+            if let Some((unlocked, total)) = game.achievement_progress {
+                ui.label(format!("{}: {unlocked}/{total}", text("Получено достижений", "Unlocked achievements")));
+            }
+            if let Some(path) = &game.install_dir {
+                if ui.button(text("Открыть папку", "Open folder")).clicked() {
+                    if open::that_detached(path).is_err() {
+                        self.problem = Some(text("Не удалось открыть папку", "Could not open the folder").into());
+                    }
+                }
+            }
+            ui.add_enabled(false, egui::Button::new(text("Запустить", "Launch")))
+                .on_disabled_hover_text(text("Добавляется на этапе запуска игр", "Available after game launch is implemented"));
+            ui.add_enabled(false, egui::Button::new(text("Удалить с устройства", "Remove from device")))
+                .on_disabled_hover_text(text("Добавляется на этапе установки и удаления", "Available after safe removal is implemented"));
+        } else {
+            ui.add_enabled(false, egui::Button::new(text("Установить", "Install")))
+                .on_disabled_hover_text(text("Добавляется на этапе установки и удаления", "Available after installation is implemented"));
+        }
+        if ui.button(text("Открыть в браузере", "Open in browser")).clicked() {
+            let url = format!("https://store.steampowered.com/app/{}/", game.id);
+            if open::that_detached(url).is_err() {
+                self.problem = Some(text("Не удалось открыть браузер", "Could not open the browser").into());
+            }
+        }
     }
 }
 
@@ -148,40 +244,78 @@ impl eframe::App for App {
                 }
             });
             if self.view == View::Installed {
-                self.folder_ui(ui);
+                self.folders_ui(ui);
             }
-
-            let search = ui.add(
-                TextEdit::singleline(&mut self.query)
-                    .hint_text(text("Поиск по названию или AppID", "Search by title or AppID"))
-                    .desired_width(f32::INFINITY),
-            );
-            if search.changed() {
-                self.refresh_visible();
+            if let Some(problem) = &self.problem {
+                ui.label(problem);
             }
             ui.separator();
-
-            if self.view == View::Installed && self.scan.is_some() {
-                ui.label(text("Чтение библиотеки…", "Reading library…"));
-            } else if self.view == View::Installed && let Some(problem) = &self.problem {
-                ui.label(text("Не удалось прочитать библиотеку", "Could not read the library"));
-                ui.label(problem);
-            } else if self.visible.is_empty() {
-                ui.label(text("Игры не найдены", "No games found"));
-            } else {
-                let games = self.games();
-                ScrollArea::vertical().id_salt(self.view == View::Library).show_rows(ui, 24.0, self.visible.len(), |ui, range| {
-                    for index in range {
-                        let label = egui::Label::new(&games[self.visible[index]].name).truncate();
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), 24.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| ui.add(label),
-                        );
+            ui.columns(2, |columns| {
+                let left = &mut columns[0];
+                let search = left.add(
+                    TextEdit::singleline(&mut self.query)
+                        .hint_text(text("Поиск по названию или AppID", "Search by title or AppID"))
+                        .desired_width(f32::INFINITY),
+                );
+                if search.changed() {
+                    self.refresh_visible();
+                }
+                left.separator();
+                if self.view == View::Installed && self.scan.is_some() {
+                    left.label(text("Чтение библиотеки…", "Reading library…"));
+                } else if self.visible.is_empty() {
+                    left.label(text("Игры не найдены", "No games found"));
+                } else {
+                    let mut picked = None;
+                    let games = self.games();
+                    ScrollArea::vertical().id_salt(self.view == View::Library).show_rows(left, 26.0, self.visible.len(), |ui, range| {
+                        for index in range {
+                            let game = &games[self.visible[index]];
+                            if ui.selectable_label(self.selected == Some(game.id), &game.name).clicked() {
+                                picked = Some(game.id);
+                            }
+                        }
+                    });
+                    if let Some(id) = picked {
+                        self.selected = Some(id);
                     }
-                });
-            }
+                }
+                columns[1].separator();
+                if let Some(game) = self.selected_game() {
+                    self.details_ui(&mut columns[1], &game);
+                } else {
+                    columns[1].label(text("Выбери игру слева", "Select a game on the left"));
+                }
+            });
         });
+    }
+}
+
+fn roots_file() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("SteamUltraLite").join("libraries.json"))
+}
+
+fn load_roots() -> Vec<PathBuf> {
+    if let Some(path) = roots_file() {
+        if let Ok(bytes) = std::fs::read(&path) {
+            if bytes.len() <= 16 * 1024 {
+                if let Ok(saved) = serde_json::from_slice::<Vec<PathBuf>>(&bytes) {
+                    return saved.into_iter().filter(|path| library::valid_root(path)).collect();
+                }
+            }
+        }
+    }
+    library::default_root().into_iter().collect()
+}
+
+fn save_roots(roots: &[PathBuf]) {
+    let Some(path) = roots_file() else { return };
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_ok() {
+            if let Ok(bytes) = serde_json::to_vec(roots) {
+                let _ = std::fs::write(path, bytes);
+            }
+        }
     }
 }
 
@@ -189,7 +323,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         TITLE,
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([680.0, 480.0]).with_min_inner_size([520.0, 320.0]),
+            viewport: egui::ViewportBuilder::default().with_inner_size([920.0, 580.0]).with_min_inner_size([720.0, 420.0]),
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),

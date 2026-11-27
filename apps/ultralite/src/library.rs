@@ -6,16 +6,28 @@ use std::path::{Path, PathBuf};
 const MAX_VDF_BYTES: u64 = 1024 * 1024;
 const FULLY_INSTALLED: u64 = 4;
 
+#[derive(Clone)]
 pub struct Game {
     pub id: u32,
     pub name: String,
+    pub developer: Option<String>,
+    pub publisher: Option<String>,
+    pub achievements: Option<bool>,
+    pub cards: Option<bool>,
+    pub install_dir: Option<PathBuf>,
+    pub playtime_minutes: Option<u64>,
+    pub achievement_progress: Option<(u32, u32)>,
     search_name: String,
 }
 
 impl Game {
     pub fn new(id: u32, name: &str) -> Self {
-        Self { id, name: name.into(), search_name: name.to_lowercase() }
+        Self { id, name: name.into(), developer: None, publisher: None, achievements: None, cards: None, install_dir: None, playtime_minutes: None, achievement_progress: None, search_name: name.to_lowercase() }
     }
+}
+
+pub fn valid_root(path: &Path) -> bool {
+    local_path(path) && path.join("steamapps").is_dir()
 }
 
 pub fn default_root() -> Option<PathBuf> {
@@ -64,13 +76,34 @@ fn read_vdf(path: &Path) -> io::Result<vdf::Obj> {
     vdf::parse(text.trim_start_matches('\u{feff}')).map_err(io::Error::other)
 }
 
-pub fn scan(root: &Path) -> io::Result<Vec<Game>> {
+pub fn scan_roots(roots: &[PathBuf]) -> io::Result<Vec<Game>> {
+    let mut games = HashMap::new();
+    let mut first_error = None;
+    let mut read_any = false;
+    for root in roots {
+        if !local_path(root) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Expected an absolute local drive path"));
+        }
+        match scan_root(root, &mut games) {
+            Ok(()) => read_any = true,
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if !read_any && let Some(error) = first_error {
+        return Err(error);
+    }
+    let mut games: Vec<_> = games.into_values().collect();
+    sort(&mut games);
+    Ok(games)
+}
+
+fn scan_root(root: &Path, games: &mut HashMap<u32, Game>) -> io::Result<()> {
     if !local_path(root) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "Expected an absolute local drive path"));
     }
     let root_apps = root.join("steamapps");
-    let mut games = HashMap::new();
-    scan_folder(&root_apps, &mut games)?;
+    scan_folder(&root_apps, games)?;
 
     if let Ok(document) = read_vdf(&root_apps.join("libraryfolders.vdf"))
         && let Some(folders) = document.obj("libraryfolders")
@@ -84,14 +117,12 @@ pub fn scan(root: &Path) -> io::Result<Vec<Game>> {
                 && local_path(path)
             {
                 // A disconnected secondary drive should not hide other games.
-                let _ = scan_folder(&path.join("steamapps"), &mut games);
+                let _ = scan_folder(&path.join("steamapps"), games);
             }
         }
     }
 
-    let mut games: Vec<_> = games.into_values().collect();
-    sort(&mut games);
-    Ok(games)
+    Ok(())
 }
 
 fn scan_folder(steamapps: &Path, games: &mut HashMap<u32, Game>) -> io::Result<()> {
@@ -119,9 +150,22 @@ fn scan_folder(steamapps: &Path, games: &mut HashMap<u32, Game>) -> io::Result<(
         let Some(name) = app.str("name").map(str::trim).filter(|name| !name.is_empty()) else {
             continue;
         };
-        games.insert(id, Game::new(id, name));
+        let mut game = Game::new(id, name);
+        if let Some(folder) = app.str("installdir").filter(|folder| valid_folder(folder)) {
+            let dir = steamapps.join("common").join(folder);
+            if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink()) {
+                game.install_dir = Some(dir);
+            }
+        }
+        games.insert(id, game);
     }
     Ok(())
+}
+
+fn valid_folder(folder: &str) -> bool {
+    !folder.is_empty() && folder != "." && folder != ".."
+        && !folder.ends_with([' ', '.'])
+        && !folder.chars().any(|c| c.is_control() || r#"<>:"/\|?*"#.contains(c))
 }
 
 pub fn sort(games: &mut [Game]) {
@@ -175,11 +219,33 @@ mod tests {
         let malformed = second.path().join("steamapps/appmanifest_20.acf");
         fs::write(malformed, b"\"AppState\" {").unwrap();
 
-        let games = scan(primary.path()).unwrap();
+        let games = scan_roots(&[primary.path().to_path_buf()]).unwrap();
         assert_eq!(games.iter().map(|game| game.id).collect::<Vec<_>>(), [16, 15]);
         assert_eq!(matches(&games, " ЗВЁЗДНАЯ "), [1]);
         assert_eq!(matches(&games, "16"), [0]);
         assert!(matches(&games, "missing").is_empty());
+        let independent = tempfile::tempdir().unwrap();
+        fs::create_dir(independent.path().join("steamapps")).unwrap();
+        let doc = vdf::Obj::default().with_obj(
+            "AppState",
+            vdf::Obj::default().with("appid", "30").with("name", "Other disk").with("StateFlags", "4"),
+        );
+        fs::write(independent.path().join("steamapps/appmanifest_30.acf"), vdf::write(&doc)).unwrap();
+        let roots = [primary.path().to_path_buf(), independent.path().to_path_buf()];
+        let all = scan_roots(&roots).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(matches(&all, "Other disk").len(), 1);
+        let absent = independent.path().join("disconnected");
+        let surviving = scan_roots(&[absent, primary.path().to_path_buf()]).unwrap();
+        assert_eq!(surviving.len(), 2);
+    }
+
+    #[test]
+    fn rejects_unsafe_install_folders() {
+        for folder in ["..", "../other", r"..\other", "C:other", "name.", "name ", "CON?"] {
+            assert!(!valid_folder(folder), "{folder}");
+        }
+        assert!(valid_folder("Game folder"));
     }
 
     #[cfg(windows)]

@@ -372,7 +372,43 @@ async fn load_library(conn: &Connection, events: &mut net::connection::Events) -
         return Err(Failure::Library);
     }
     let packages: Vec<_> = list.licenses.iter().map(|license| (license.package_id(), license.access_token())).collect();
-    catalog::resolve(conn, &packages).await.map_err(|_| Failure::Library)
+    let mut games = catalog::resolve(conn, &packages).await.map_err(|_| Failure::Library)?;
+    let request = CPlayerGetOwnedGamesRequest {
+        steamid: Some(conn.steam_id()),
+        include_appinfo: Some(false),
+        include_played_free_games: Some(true),
+        ..Default::default()
+    };
+    if let Ok(Ok(owned)) = tokio::time::timeout(Duration::from_secs(6),
+        conn.call::<_, CPlayerGetOwnedGamesResponse>("Player.GetOwnedGames#1", &request)).await
+    {
+        let times: std::collections::HashMap<_, _> = owned.games.iter()
+            .map(|item| (item.appid() as u32, item.playtime_forever().max(0) as u64)).collect();
+        for game in &mut games {
+            game.playtime_minutes = times.get(&game.id).copied();
+        }
+    }
+    for chunk in games.chunks_mut(100) {
+        let request = CPlayerGetAchievementsProgressRequest {
+            steamid: Some(conn.steam_id()),
+            language: Some("english".into()),
+            appids: chunk.iter().map(|game| game.id).collect(),
+            ..Default::default()
+        };
+        if let Ok(Ok(reply)) = tokio::time::timeout(Duration::from_secs(6),
+            conn.call::<_, CPlayerGetAchievementsProgressResponse>("Player.GetAchievementsProgress#1", &request)).await
+        {
+            let counts: std::collections::HashMap<_, _> = reply.achievement_progress.iter()
+                .map(|item| (item.appid(), (item.unlocked(), item.total()))).collect();
+            for game in chunk {
+                game.achievement_progress = counts.get(&game.id).copied();
+                if game.achievement_progress.is_some_and(|(_, total)| total > 0) {
+                    game.achievements = Some(true);
+                }
+            }
+        }
+    }
+    Ok(games)
 }
 
 #[cfg(test)]
