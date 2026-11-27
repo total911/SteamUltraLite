@@ -12,6 +12,12 @@ pub struct Game {
     search_name: String,
 }
 
+impl Game {
+    pub fn new(id: u32, name: &str) -> Self {
+        Self { id, name: name.into(), search_name: name.to_lowercase() }
+    }
+}
+
 pub fn default_root() -> Option<PathBuf> {
     ["STEAM_ROOT", "ProgramFiles(x86)", "ProgramFiles"]
         .into_iter()
@@ -84,7 +90,7 @@ pub fn scan(root: &Path) -> io::Result<Vec<Game>> {
     }
 
     let mut games: Vec<_> = games.into_values().collect();
-    games.sort_unstable_by(|a, b| a.search_name.cmp(&b.search_name).then(a.id.cmp(&b.id)));
+    sort(&mut games);
     Ok(games)
 }
 
@@ -113,9 +119,13 @@ fn scan_folder(steamapps: &Path, games: &mut HashMap<u32, Game>) -> io::Result<(
         let Some(name) = app.str("name").map(str::trim).filter(|name| !name.is_empty()) else {
             continue;
         };
-        games.insert(id, Game { id, name: name.into(), search_name: name.to_lowercase() });
+        games.insert(id, Game::new(id, name));
     }
     Ok(())
+}
+
+pub fn sort(games: &mut [Game]) {
+    games.sort_unstable_by(|a, b| a.search_name.cmp(&b.search_name).then(a.id.cmp(&b.id)));
 }
 
 pub fn matches(games: &[Game], query: &str) -> Vec<usize> {

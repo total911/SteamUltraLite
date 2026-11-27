@@ -5803,9 +5803,21 @@ dependencies = [
 name = "steam-ultralite"
 version = "0.15.0"
 dependencies = [
+ "auth",
  "eframe",
+ "flate2",
+ "keyring",
+ "net",
+ "prost",
+ "proto",
+ "qrcode",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
  "sys-locale",
  "tempfile",
+ "tokio",
  "vdf",
  "windows-sys 0.61.2",
 ]

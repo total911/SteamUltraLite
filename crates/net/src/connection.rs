@@ -33,12 +33,28 @@ pub type Events = mpsc::UnboundedReceiver<Packet>;
 impl Connection {
     /// Open a WebSocket to one CM endpoint (`host:port`).
     pub async fn connect(endpoint: &str) -> Result<(Connection, Events)> {
+        Self::connect_inner(endpoint, false).await
+    }
+
+    /// Connect a new client session directly to a Valve CM on port 443.
+    pub async fn connect_steam(endpoint: &str) -> Result<(Connection, Events)> {
+        if !steam_endpoint(endpoint) {
+            return Err(Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Steam CM endpoint")));
+        }
+        Self::connect_inner(endpoint, true).await
+    }
+
+    async fn connect_inner(endpoint: &str, direct: bool) -> Result<(Connection, Events)> {
         let url = format!("wss://{endpoint}/cmsocket/");
         tracing::info!("connecting to {url}");
-        let (ws, _) = match proxy() {
+        let (ws, _) = match (!direct).then(proxy).flatten() {
             // Through an HTTP proxy (STEAMINRUST_PROXY).
             Some(proxy) => {
                 let tcp = tunnel(&proxy, endpoint).await?;
+                tokio_tungstenite::client_async_tls(url.as_str(), tcp).await?
+            }
+            None if direct => {
+                let tcp = tokio::net::TcpStream::connect(endpoint).await?;
                 tokio_tungstenite::client_async_tls(url.as_str(), tcp).await?
             }
             None => tokio_tungstenite::connect_async(url.as_str()).await?,
@@ -259,6 +275,26 @@ impl Connection {
         let reply = self.request_with(emsg, header, req).await?;
         reply.check()?.body()
     }
+}
+
+fn steam_endpoint(endpoint: &str) -> bool {
+    let Some(host) = endpoint.strip_suffix(":443") else { return false };
+    host.len() < 254
+        && host.ends_with(".steamserver.net")
+        && host.split('.').all(|label| {
+            !label.is_empty() && !label.starts_with('-') && !label.ends_with('-')
+                && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
+#[cfg(test)]
+#[test]
+fn direct_connection_only_accepts_valve_cm_hostnames() {
+    assert!(steam_endpoint("ext1-fra2.steamserver.net:443"));
+    assert!(!steam_endpoint("127.0.0.1:443"));
+    assert!(!steam_endpoint("ext1-fra2.steamserver.net:80"));
+    assert!(!steam_endpoint("attacker.example@ext1-fra2.steamserver.net:443"));
+    assert!(!steam_endpoint("ext1-fra2.steamserver.net.attacker.example:443"));
 }
 
 /// `host:port` of the HTTP proxy for the Steam connection, from

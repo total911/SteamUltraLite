@@ -8,6 +8,18 @@ license.workspace = true
 eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow"] }
 sys-locale.workspace = true
 vdf.workspace = true
+auth.workspace = true
+net.workspace = true
+proto.workspace = true
+prost.workspace = true
+tokio.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }
+qrcode.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+flate2.workspace = true
+sha1 = "0.10"
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming"] }

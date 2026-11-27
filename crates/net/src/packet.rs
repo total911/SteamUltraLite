@@ -91,6 +91,19 @@ impl Packet {
         }
     }
 
+    /// Some request replies carry a body without a header result code.
+    pub fn check_if_reported(&self) -> Result<&Self> {
+        if self.header.eresult.is_some() { self.check() } else { Ok(self) }
+    }
+
+    /// Return the nonzero session id only for the account used to sign in.
+    pub fn session_for(&self, steam_id: u64) -> Option<i32> {
+        if self.header.steamid.is_some_and(|id| id != 0 && id != steam_id) {
+            return None;
+        }
+        self.header.client_sessionid.filter(|id| *id != 0)
+    }
+
     /// Expand a `Multi` message (optionally gzipped) into its inner packets.
     pub fn unpack_multi(&self) -> Result<Vec<Packet>> {
         let multi: proto::CMsgMulti = self.body()?;
