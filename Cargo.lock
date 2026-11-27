@@ -5804,9 +5804,13 @@ name = "steam-ultralite"
 version = "0.15.0"
 dependencies = [
  "auth",
+ "depot",
  "eframe",
  "flate2",
+ "fs4",
  "keyring",
+ "local",
+ "model",
  "net",
  "open",
  "prost",
@@ -5820,6 +5824,7 @@ dependencies = [
  "sys-locale",
  "tempfile",
  "tokio",
+ "tracing",
  "vdf",
  "windows-sys 0.61.2",
 ]

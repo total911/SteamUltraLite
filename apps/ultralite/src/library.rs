@@ -15,14 +15,16 @@ pub struct Game {
     pub achievements: Option<bool>,
     pub cards: Option<bool>,
     pub install_dir: Option<PathBuf>,
+    pub library_root: Option<PathBuf>,
     pub playtime_minutes: Option<u64>,
     pub achievement_progress: Option<(u32, u32)>,
+    pub content: Option<model::OwnedApp>,
     search_name: String,
 }
 
 impl Game {
     pub fn new(id: u32, name: &str) -> Self {
-        Self { id, name: name.into(), developer: None, publisher: None, achievements: None, cards: None, install_dir: None, playtime_minutes: None, achievement_progress: None, search_name: name.to_lowercase() }
+        Self { id, name: name.into(), developer: None, publisher: None, achievements: None, cards: None, install_dir: None, library_root: None, playtime_minutes: None, achievement_progress: None, content: None, search_name: name.to_lowercase() }
     }
 }
 
@@ -157,6 +159,7 @@ fn scan_folder(steamapps: &Path, games: &mut HashMap<u32, Game>) -> io::Result<(
                 game.install_dir = Some(dir);
             }
         }
+        game.library_root = steamapps.parent().map(Path::to_path_buf);
         games.insert(id, game);
     }
     Ok(())

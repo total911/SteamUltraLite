@@ -109,7 +109,8 @@ fn package_app_ids(bytes: &[u8]) -> Vec<u32> {
 
 fn parse_game(id: u32, metadata: &str) -> Option<Game> {
     let root = vdf::parse(metadata.trim_end_matches('\0')).ok()?;
-    let common = root.path(&["appinfo", "common"])?;
+    let info = root.obj("appinfo")?;
+    let common = info.obj("common")?;
     let kind = common.str("type")?.to_ascii_lowercase();
     if !LIBRARY_TYPES.contains(&kind.as_str()) {
         return None;
@@ -133,7 +134,80 @@ fn parse_game(id: u32, metadata: &str) -> Option<Game> {
         game.achievements = Some(categories.get("category_22").is_some());
         game.cards = Some(categories.get("category_29").is_some());
     }
+    game.content = Some(model::OwnedApp {
+        app_id: id,
+        name: name.to_owned(),
+        kind,
+        install_dir: info.obj("config").and_then(|config| config.str("installdir")).unwrap_or_default().to_owned(),
+        depots: parse_depots(info),
+        branches: info.path(&["depots", "branches"]).into_iter().flat_map(vdf::Obj::iter)
+            .filter_map(|(name, value)| {
+                let branch = value.as_obj()?;
+                Some(model::Branch {
+                    name: name.to_owned(),
+                    build_id: branch.u64("buildid").unwrap_or(0),
+                    ..Default::default()
+                })
+            }).collect(),
+        ..Default::default()
+    });
     Some(game)
+}
+
+pub fn parse_depots(info: &vdf::Obj) -> Vec<model::DepotInfo> {
+    let Some(depots) = info.obj("depots") else { return Vec::new() };
+    depots.iter().filter_map(|(id, value)| {
+        let id = id.parse().ok()?;
+        let item = value.as_obj()?;
+        let config = item.obj("config");
+        let option = |name| config.and_then(|config| config.str(name)).unwrap_or_default().to_owned();
+        let manifests = item.obj("manifests").into_iter().flat_map(vdf::Obj::iter)
+            .filter_map(|(branch, value)| {
+                let (gid, size) = match value {
+                    vdf::Value::Obj(obj) => (obj.u64("gid").unwrap_or(0), obj.u64("size").unwrap_or(0)),
+                    vdf::Value::Str(text) => (text.parse().unwrap_or(0), 0),
+                };
+                (gid != 0).then(|| (branch.to_owned(), gid, size))
+            }).collect();
+        Some(model::DepotInfo {
+            id,
+            os: option("oslist"),
+            arch: option("osarch"),
+            language: option("language"),
+            low_violence: option("lowviolence") == "1",
+            dlc_app: item.u64("dlcappid").map(|id| id as u32),
+            shared_install: item.str("sharedinstall") == Some("1") || item.u64("depotfromapp").is_some(),
+            from_app: item.u64("depotfromapp").map(|id| id as u32),
+            manifests,
+        })
+    }).collect()
+}
+
+pub async fn raw_app_info(conn: &Connection, id: u32) -> Option<vdf::Obj> {
+    let tokens: CMsgClientPicsAccessTokenResponse = decode_reply(&conn.request(
+        emsg::CLIENT_PICS_ACCESS_TOKEN_REQUEST,
+        &CMsgClientPicsAccessTokenRequest { appids: vec![id], packageids: Vec::new() },
+    ).await.ok()?).ok()?;
+    let access_token = tokens.app_access_tokens.iter().find(|token| token.appid() == id).map(|token| token.access_token());
+    let request = CMsgClientPicsProductInfoRequest {
+        apps: vec![c_msg_client_pics_product_info_request::AppInfo {
+            appid: Some(id), access_token, only_public_obsolete: None,
+        }],
+        ..Default::default()
+    };
+    let http = reqwest::Client::builder().https_only(true).no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15)).build().ok()?;
+    for response in product_info(conn, &request).await.ok()? {
+        for app in response.apps.into_iter().filter(|app| app.appid() == id) {
+            let text = match app.buffer.as_deref().filter(|bytes| !bytes.is_empty()) {
+                Some(bytes) => std::str::from_utf8(bytes).ok()?.to_owned(),
+                None => fetch_metadata(&http, response.http_host.as_deref()?, id, app.sha.as_deref()?).await?,
+            };
+            return vdf::parse(text.trim_end_matches('\0')).ok()?.obj("appinfo").cloned();
+        }
+    }
+    None
 }
 
 fn content_host(host: &str) -> bool {
@@ -205,5 +279,12 @@ mod tests {
         assert_eq!(game.publisher.as_deref(), Some("Publisher"));
         assert_eq!(game.achievements, Some(true));
         assert_eq!(game.cards, Some(true));
+        let depot = r#""appinfo" { "common" { "type" "Game" "name" "Example" }
+            "config" { "installdir" "Example" }
+            "depots" { "123" { "config" { "oslist" "windows" }
+                "manifests" { "public" { "gid" "456" "size" "1024" } } } } }"#;
+        let content = parse_game(42, depot).unwrap().content.unwrap();
+        assert_eq!(content.install_dir, "Example");
+        assert_eq!(content.depots[0].manifest("public"), Some((456, 1024)));
     }
 }

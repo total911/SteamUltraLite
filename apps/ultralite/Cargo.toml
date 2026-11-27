@@ -17,6 +17,11 @@ reqwest = { version = "0.13", default-features = false, features = ["native-tls"
 qrcode.workspace = true
 rfd = "0.18"
 open.workspace = true
+model.workspace = true
+local.workspace = true
+depot.workspace = true
+fs4 = "1"
+tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 flate2.workspace = true

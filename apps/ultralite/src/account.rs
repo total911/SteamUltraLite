@@ -1,12 +1,16 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::Duration;
 
 use eframe::egui::{self, Color32, ColorImage, TextureHandle};
 use net::{Connection, Packet, emsg, eresult};
 use proto::*;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
-use crate::{catalog, library::Game};
+use crate::{catalog, download, install, library::Game};
 
 const SERVICE: &str = "dev.SteamUltraLite";
 const DEVICE: &str = "SteamUltraLite";
@@ -25,8 +29,13 @@ type SessionResult<T = ()> = Result<T, Failure>;
 enum Event {
     Qr(ColorImage),
     Loading,
-    Library(Vec<Game>),
+    Library(Vec<Game>, mpsc::UnboundedSender<Command>),
+    Installed(u32, Result<(), String>),
     Finished(SessionResult),
+}
+
+enum Command {
+    Install { app: model::OwnedApp, library: PathBuf, russian: bool, progress: Arc<depot::Progress> },
 }
 
 enum State {
@@ -44,11 +53,17 @@ pub struct Account {
     state: State,
     remember: bool,
     worker: Option<(Receiver<Event>, Option<oneshot::Sender<bool>>)>,
+    commands: Option<mpsc::UnboundedSender<Command>>,
+    progress: Option<Arc<depot::Progress>>,
+    install_id: Option<u32>,
+    install_result: Option<String>,
+    installed_id: Option<u32>,
+    install_russian: bool,
 }
 
 impl Default for Account {
     fn default() -> Self {
-        Self { games: Vec::new(), state: State::SignedOut, remember: false, worker: None }
+        Self { games: Vec::new(), state: State::SignedOut, remember: false, worker: None, commands: None, progress: None, install_id: None, install_result: None, installed_id: None, install_russian: false }
     }
 }
 
@@ -87,6 +102,51 @@ impl Account {
         &self.games
     }
 
+    pub fn install(&mut self, game: &Game, library: PathBuf, russian: bool) {
+        let Some(app) = game.content.clone() else { return };
+        let Some(commands) = &self.commands else { return };
+        if self.progress.is_some() { return; }
+        let progress = Arc::new(depot::Progress::default());
+        progress.concurrency.store(4, Ordering::Relaxed);
+        if commands.send(Command::Install { app, library, russian, progress: progress.clone() }).is_ok() {
+            self.install_russian = russian;
+            self.install_id = Some(game.id);
+            self.install_result = None;
+            self.progress = Some(progress);
+        }
+    }
+
+    pub fn take_installed(&mut self) -> Option<u32> {
+        self.installed_id.take()
+    }
+
+    pub fn installing(&self) -> bool {
+        self.progress.is_some()
+    }
+
+    pub fn install_ui(&mut self, ui: &mut egui::Ui, russian: bool) {
+        if let Some(progress) = &self.progress {
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+            let id = self.install_id.unwrap_or(0);
+            let done = progress.downloaded.load(Ordering::Relaxed);
+            let total = progress.download_total.load(Ordering::Relaxed);
+            ui.label(if russian { format!("Загрузка {id}: {done}/{total} байт") } else { format!("Download {id}: {done}/{total} bytes") });
+            if total > 0 {
+                ui.add(egui::ProgressBar::new((done as f32 / total as f32).clamp(0.0, 1.0)));
+            }
+            let paused = progress.paused.load(Ordering::Relaxed);
+            if ui.button(if paused { if russian { "Продолжить" } else { "Resume" } } else if russian { "Пауза" } else { "Pause" }).clicked() {
+                progress.paused.store(!paused, Ordering::Relaxed);
+            }
+            if ui.button(if russian { "Отменить загрузку" } else { "Cancel download" }).clicked() {
+                progress.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+        if let Some(message) = &self.install_result {
+            ui.label(message);
+        }
+    }
+
     pub fn poll(&mut self, ctx: &egui::Context) -> bool {
         let Some((updates, _)) = &self.worker else { return false };
         let mut changed = false;
@@ -100,6 +160,9 @@ impl Account {
                 Event::Finished(result) => {
                     changed = true;
                     self.games.clear();
+                    self.commands = None;
+                    self.progress = None;
+                    self.install_id = None;
                     self.worker = None;
                     self.state = match result {
                         Ok(()) => State::SignedOut,
@@ -110,7 +173,19 @@ impl Account {
                 _ if matches!(self.state, State::Closing) => {}
                 Event::Qr(image) => self.state = State::Qr(ctx.load_texture("Steam Guard", image, egui::TextureOptions::NEAREST)),
                 Event::Loading => self.state = State::Loading,
-                Event::Library(games) => {
+                Event::Installed(id, result) => {
+                    self.progress = None;
+                    self.install_id = None;
+                    self.install_result = Some(match result {
+                        Ok(()) => {
+                            self.installed_id = Some(id);
+                            if self.install_russian { "Установка завершена" } else { "Installation complete" }.into()
+                        }
+                        Err(_) => if self.install_russian { "Установка остановлена или не удалась; проверь папку и повтори" } else { "Install stopped or failed; check the folder and retry" }.into(),
+                    });
+                }
+                Event::Library(games, commands) => {
+                    self.commands = Some(commands);
                     self.games = games;
                     self.state = State::SignedIn;
                     changed = true;
@@ -184,7 +259,7 @@ async fn run(
     updates: &Sender<Event>,
     ctx: &egui::Context,
 ) -> SessionResult {
-    let (conn, mut events, account, heartbeat) = tokio::select! {
+    let (conn, mut events, account, heartbeat, cell_id) = tokio::select! {
         result = authorize(mode, updates, ctx) => result?,
         _ = &mut cancel => return Ok(()),
     };
@@ -199,23 +274,43 @@ async fn run(
         }
     });
     emit(updates, ctx, Event::Loading);
-    let outcome = tokio::select! {
+    let games = tokio::select! {
         result = tokio::time::timeout(Duration::from_secs(180), load_library(&conn, &mut events)) => {
-            match result {
-                Ok(Ok(games)) => {
-                    if matches!(mode, Mode::Qr { remember: true }) {
-                        save(&account)?;
+            result.map_err(|_| Failure::Library)??
+        }
+        _ = &mut cancel => return Ok(()),
+    };
+    if matches!(mode, Mode::Qr { remember: true }) {
+        save(&account)?;
+    }
+    let owned: HashSet<u32> = games.iter().map(|game| game.id).collect();
+    let (commands, mut requests) = mpsc::unbounded_channel();
+    emit(updates, ctx, Event::Library(games, commands));
+    let outcome = loop {
+        tokio::select! {
+            forget = &mut cancel => break forget.unwrap_or(false),
+            _ = wait_event(&mut events, emsg::CLIENT_LOGGED_OFF) => return Err(Failure::Disconnected),
+            Some(Command::Install { app, library, russian, progress }) = requests.recv() => {
+                let id = app.app_id;
+                let result = match install::request(&app, &library, russian) {
+                    Ok(request) if owned.contains(&id) => {
+                        let downloaded = tokio::select! {
+                            result = download::run(conn.clone(), app, owned.clone(), request, cell_id, None, account.steam_id, progress.clone()) => result.map(|_| ()),
+                            _ = wait_event(&mut events, emsg::CLIENT_LOGGED_OFF) => return Err(Failure::Disconnected),
+                            remove_saved = &mut cancel => {
+                                progress.stop.store(true, Ordering::Relaxed);
+                                let _ = conn.send(emsg::CLIENT_LOG_OFF, &CMsgClientLogOff::default());
+                                return if remove_saved.unwrap_or(false) { forget() } else { Ok(()) };
+                            }
+                        };
+                        downloaded
                     }
-                    emit(updates, ctx, Event::Library(games));
-                    tokio::select! {
-                        forget = &mut cancel => forget.unwrap_or(false),
-                        _ = wait_event(&mut events, emsg::CLIENT_LOGGED_OFF) => return Err(Failure::Disconnected),
-                    }
-                }
-                _ => return Err(Failure::Library),
+                    Ok(_) => Err("This account does not own the game".into()),
+                    Err(error) => Err(error),
+                };
+                emit(updates, ctx, Event::Installed(id, result));
             }
         }
-        forget = &mut cancel => forget.unwrap_or(false),
     };
     heartbeat_task.abort();
     let _ = conn.send(emsg::CLIENT_LOG_OFF, &CMsgClientLogOff::default());
@@ -264,7 +359,7 @@ async fn authorize(
     mode: Mode,
     updates: &Sender<Event>,
     ctx: &egui::Context,
-) -> SessionResult<(Connection, net::connection::Events, SavedAccount, Duration)> {
+) -> SessionResult<(Connection, net::connection::Events, SavedAccount, Duration, u32)> {
     let saved = match mode {
         Mode::Saved => Some(load()?),
         Mode::Qr { .. } => None,
@@ -304,7 +399,7 @@ async fn authorize(
     let session = reply.session_for(account.steam_id).ok_or(Failure::Logon)?;
     conn.set_session(account.steam_id, session);
     let heartbeat = Duration::from_secs(response.heartbeat_seconds().clamp(5, 60) as u64);
-    Ok((conn, events, account, heartbeat))
+    Ok((conn, events, account, heartbeat, response.cell_id()))
 }
 
 async fn connect() -> SessionResult<(Connection, net::connection::Events)> {

@@ -3,6 +3,12 @@
 mod account;
 mod catalog;
 mod library;
+mod install;
+#[path = "../../../crates/client/src/download.rs"]
+mod download;
+mod pics {
+    pub use crate::catalog::{parse_depots, raw_app_info};
+}
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -35,10 +41,13 @@ struct App {
     installed: Vec<Game>,
     view: View,
     selected: Option<u32>,
+    install_target: Option<PathBuf>,
     query: String,
     visible: Vec<usize>,
     problem: Option<String>,
     scan: Option<Receiver<std::io::Result<Vec<Game>>>>,
+    pending_remove: Option<u32>,
+    remove_task: Option<Receiver<Result<(), String>>>,
 }
 
 impl App {
@@ -52,10 +61,13 @@ impl App {
             installed: Vec::new(),
             view: View::Installed,
             selected: None,
+            install_target: None,
             query: String::new(),
             visible: Vec::new(),
             problem: None,
             scan: None,
+            pending_remove: None,
+            remove_task: None,
         };
         if !app.roots.is_empty() {
             app.scan(ctx);
@@ -95,6 +107,26 @@ impl App {
         }
     }
 
+    fn receive_remove(&mut self, ctx: &egui::Context) {
+        let Some(task) = &self.remove_task else { return };
+        match task.try_recv() {
+            Ok(Ok(())) => {
+                self.remove_task = None;
+                self.selected = None;
+                self.scan(ctx);
+            }
+            Ok(Err(error)) => {
+                self.remove_task = None;
+                self.problem = Some(error);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.remove_task = None;
+                self.problem = Some("Removal interrupted".into());
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+    }
+
     fn games(&self) -> &[Game] {
         self.view.games(&self.installed, self.account.games())
     }
@@ -107,6 +139,7 @@ impl App {
         if self.view != view {
             self.view = view;
             self.selected = None;
+            self.pending_remove = None;
             self.refresh_visible();
         }
     }
@@ -207,11 +240,59 @@ impl App {
             }
             ui.add_enabled(false, egui::Button::new(text("Запустить", "Launch")))
                 .on_disabled_hover_text(text("Добавляется на этапе запуска игр", "Available after game launch is implemented"));
-            ui.add_enabled(false, egui::Button::new(text("Удалить с устройства", "Remove from device")))
-                .on_disabled_hover_text(text("Добавляется на этапе установки и удаления", "Available after safe removal is implemented"));
+            let can_remove = game.install_dir.is_some() && game.library_root.is_some()
+                && self.remove_task.is_none() && !self.account.installing();
+            if self.pending_remove == Some(game.id) {
+                ui.label(text(
+                    "Удалятся файлы игры, включая сохранения внутри её папки.",
+                    "Game files, including saves inside its folder, will be deleted.",
+                ));
+                if ui.button(text("Подтвердить удаление", "Confirm removal")).clicked() {
+                    let (sender, receiver) = channel();
+                    let game = game.clone();
+                    let repaint = ui.ctx().clone();
+                    std::thread::spawn(move || {
+                        let _ = sender.send(install::remove(&game));
+                        repaint.request_repaint();
+                    });
+                    self.remove_task = Some(receiver);
+                    self.pending_remove = None;
+                }
+                if ui.button(text("Отмена", "Cancel")).clicked() {
+                    self.pending_remove = None;
+                }
+            } else if ui.add_enabled(can_remove, egui::Button::new(text("Удалить с устройства", "Remove from device"))).clicked() {
+                self.pending_remove = Some(game.id);
+            }
         } else {
-            ui.add_enabled(false, egui::Button::new(text("Установить", "Install")))
-                .on_disabled_hover_text(text("Добавляется на этапе установки и удаления", "Available after installation is implemented"));
+            ui.separator();
+            ui.label(text("Куда установить", "Install location"));
+            egui::ComboBox::from_id_salt("install_library")
+                .selected_text(self.install_target.as_ref().map_or_else(
+                    || text("Выбери папку", "Choose a folder").to_owned(),
+                    |path| path.display().to_string(),
+                ))
+                .show_ui(ui, |ui| {
+                    for root in &self.roots {
+                        ui.selectable_value(&mut self.install_target, Some(root.clone()), root.display().to_string());
+                    }
+                });
+            if ui.button(text("Добавить папку через обзор…", "Add a folder…")).clicked() {
+                self.add_folder(ui.ctx());
+            }
+            let already_installed = self.installed.iter().any(|installed| installed.id == game.id);
+            if already_installed {
+                ui.label(text("Уже установлена в другой библиотеке", "Already installed in another library"));
+            }
+            let ready = self.account.is_signed_in() && !self.account.installing()
+                && game.content.as_ref().is_some_and(|app| !app.depots.is_empty())
+                && self.install_target.as_ref().is_some_and(|path| library::valid_root(path))
+                && !already_installed;
+            if ui.add_enabled(ready, egui::Button::new(text("Установить", "Install"))).clicked() {
+                if let Some(root) = &self.install_target {
+                    self.account.install(game, root.clone(), russian);
+                }
+            }
         }
         if ui.button(text("Открыть в браузере", "Open in browser")).clicked() {
             let url = format!("https://store.steampowered.com/app/{}/", game.id);
@@ -225,14 +306,20 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.receive_scan();
+        self.receive_remove(ui.ctx());
         if self.account.poll(ui.ctx()) {
             self.set_view(if self.account.is_signed_in() { View::Library } else { View::Installed });
+        }
+        if self.account.take_installed().is_some() {
+            self.scan(ui.ctx());
+            self.set_view(View::Installed);
         }
 
         let russian = self.russian;
         let text = |ru: &'static str, en: &'static str| if russian { ru } else { en };
         CentralPanel::default().show(ui, |ui| {
             self.account.ui(ui, russian);
+            self.account.install_ui(ui, russian);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.account.is_signed_in(), |ui| {
                     if ui.selectable_label(self.view == View::Library, text("Библиотека Steam", "Steam library")).clicked() {
