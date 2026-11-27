@@ -4,6 +4,7 @@ mod account;
 mod catalog;
 mod library;
 mod install;
+mod launch;
 #[path = "../../../crates/client/src/download.rs"]
 mod download;
 mod pics {
@@ -239,9 +240,14 @@ impl App {
                 }
             }
             let can_launch = game.install_dir.as_ref().is_some_and(|path| path.is_dir());
-            if ui.add_enabled(can_launch, egui::Button::new(text("Запустить через Steam", "Launch through Steam"))).clicked() {
-                if open::that_detached(format!("steam://run/{}", game.id)).is_err() {
-                    self.problem = Some(text("Не удалось открыть Steam", "Could not open Steam").into());
+            let launch_label = if launch::uses_steam(game.id) {
+                text("Запустить через Steam", "Launch through Steam")
+            } else {
+                text("Запустить", "Launch")
+            };
+            if ui.add_enabled(can_launch, egui::Button::new(launch_label)).clicked() {
+                if let Err(error) = launch::start(game) {
+                    self.problem = Some(error);
                 }
             }
             let can_remove = game.install_dir.is_some() && game.library_root.is_some()
