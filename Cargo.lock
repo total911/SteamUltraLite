@@ -5805,6 +5805,7 @@ version = "0.15.0"
 dependencies = [
  "auth",
  "depot",
+ "directories",
  "eframe",
  "flate2",
  "fs4",
@@ -5827,6 +5828,7 @@ dependencies = [
  "tracing",
  "vdf",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]

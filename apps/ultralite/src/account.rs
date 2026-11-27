@@ -10,7 +10,7 @@ use net::{Connection, Packet, emsg, eresult};
 use proto::*;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{catalog, download, install, library::Game};
+use crate::{catalog, cloud, download, install, library::Game};
 
 const SERVICE: &str = "dev.SteamUltraLite";
 const DEVICE: &str = "SteamUltraLite";
@@ -31,11 +31,13 @@ enum Event {
     Loading,
     Library(Vec<Game>, mpsc::UnboundedSender<Command>),
     Installed(u32, Result<(), String>),
+    CloudReport(model::CloudReport),
     Finished(SessionResult),
 }
 
 enum Command {
     Install { app: model::OwnedApp, library: PathBuf, russian: bool, progress: Arc<depot::Progress> },
+    Cloud { app_id: u32, install_dir: PathBuf, config: model::CloudConfig, mode: cloud::Mode },
 }
 
 enum State {
@@ -59,11 +61,13 @@ pub struct Account {
     install_result: Option<String>,
     installed_id: Option<u32>,
     install_russian: bool,
+    cloud_id: Option<u32>,
+    cloud_report: Option<model::CloudReport>,
 }
 
 impl Default for Account {
     fn default() -> Self {
-        Self { games: Vec::new(), state: State::SignedOut, remember: false, worker: None, commands: None, progress: None, install_id: None, install_result: None, installed_id: None, install_russian: false }
+        Self { games: Vec::new(), state: State::SignedOut, remember: false, worker: None, commands: None, progress: None, install_id: None, install_result: None, installed_id: None, install_russian: false, cloud_id: None, cloud_report: None }
     }
 }
 
@@ -124,6 +128,25 @@ impl Account {
         self.progress.is_some()
     }
 
+    pub fn cloud(&mut self, game: &Game, mode: cloud::Mode) {
+        let Some(config) = game.content.as_ref().and_then(|app| app.cloud.clone()) else { return };
+        let Some(install_dir) = game.install_dir.clone() else { return };
+        let Some(commands) = &self.commands else { return };
+        if self.cloud_id.is_some() { return; }
+        if commands.send(Command::Cloud { app_id: game.id, install_dir, config, mode }).is_ok() {
+            self.cloud_id = Some(game.id);
+            self.cloud_report = None;
+        }
+    }
+
+    pub fn cloud_running(&self) -> bool {
+        self.cloud_id.is_some()
+    }
+
+    pub fn cloud_report(&self, id: u32) -> Option<&model::CloudReport> {
+        self.cloud_report.as_ref().filter(|report| report.app_id == id)
+    }
+
     pub fn install_ui(&mut self, ui: &mut egui::Ui, russian: bool) {
         if let Some(progress) = &self.progress {
             ui.ctx().request_repaint_after(Duration::from_millis(250));
@@ -163,6 +186,8 @@ impl Account {
                     self.commands = None;
                     self.progress = None;
                     self.install_id = None;
+                    self.cloud_id = None;
+                    self.cloud_report = None;
                     self.worker = None;
                     self.state = match result {
                         Ok(()) => State::SignedOut,
@@ -183,6 +208,10 @@ impl Account {
                         }
                         Err(_) => if self.install_russian { "Установка остановлена или не удалась; проверь папку и повтори" } else { "Install stopped or failed; check the folder and retry" }.into(),
                     });
+                }
+                Event::CloudReport(report) => {
+                    self.cloud_id = None;
+                    self.cloud_report = Some(report);
                 }
                 Event::Library(games, commands) => {
                     self.commands = Some(commands);
@@ -290,7 +319,8 @@ async fn run(
         tokio::select! {
             forget = &mut cancel => break forget.unwrap_or(false),
             _ = wait_event(&mut events, emsg::CLIENT_LOGGED_OFF) => return Err(Failure::Disconnected),
-            Some(Command::Install { app, library, russian, progress }) = requests.recv() => {
+            Some(command) = requests.recv() => match command {
+            Command::Install { app, library, russian, progress } => {
                 let id = app.app_id;
                 let result = match install::request(&app, &library, russian) {
                     Ok(request) if owned.contains(&id) => {
@@ -310,6 +340,30 @@ async fn run(
                 };
                 emit(updates, ctx, Event::Installed(id, result));
             }
+            Command::Cloud { app_id, install_dir, config, mode } => {
+                let target = cloud::Target {
+                    app_id,
+                    steam_id: account.steam_id,
+                    install_dir,
+                    steam_root: local::find_steam_root(),
+                    config: Some(config),
+                    cell_id,
+                };
+                let report = if owned.contains(&app_id) {
+                    tokio::select! {
+                        report = cloud::sync(&conn, &target, mode, &[], &[]) => report,
+                        _ = wait_event(&mut events, emsg::CLIENT_LOGGED_OFF) => return Err(Failure::Disconnected),
+                        remove_saved = &mut cancel => {
+                            let _ = conn.send(emsg::CLIENT_LOG_OFF, &CMsgClientLogOff::default());
+                            return if remove_saved.unwrap_or(false) { forget() } else { Ok(()) };
+                        },
+                    }
+                } else {
+                    model::CloudReport { app_id, errors: vec![(String::new(), "Game not owned by this account".into())], ..Default::default() }
+                };
+                emit(updates, ctx, Event::CloudReport(report));
+            }
+            },
         }
     };
     heartbeat_task.abort();

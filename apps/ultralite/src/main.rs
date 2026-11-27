@@ -5,6 +5,9 @@ mod catalog;
 mod library;
 mod install;
 mod launch;
+// ponytail: cloud lives in this package to exclude the old client; extract a shared crate if both copies need maintenance.
+mod cloud;
+mod store;
 #[path = "../../../crates/client/src/download.rs"]
 mod download;
 mod pics {
@@ -48,6 +51,7 @@ struct App {
     problem: Option<String>,
     scan: Option<Receiver<std::io::Result<Vec<Game>>>>,
     pending_remove: Option<u32>,
+    pending_cloud_sync: Option<u32>,
     remove_task: Option<Receiver<Result<(), String>>>,
 }
 
@@ -68,6 +72,7 @@ impl App {
             problem: None,
             scan: None,
             pending_remove: None,
+            pending_cloud_sync: None,
             remove_task: None,
         };
         if !app.roots.is_empty() {
@@ -141,6 +146,7 @@ impl App {
             self.view = view;
             self.selected = None;
             self.pending_remove = None;
+            self.pending_cloud_sync = None;
             self.refresh_visible();
         }
     }
@@ -155,6 +161,7 @@ impl App {
                 game.cards = owned.cards;
                 game.playtime_minutes = owned.playtime_minutes;
                 game.achievement_progress = owned.achievement_progress;
+                game.content = owned.content.clone();
             }
         }
         Some(game)
@@ -231,6 +238,42 @@ impl App {
             }
             if let Some((unlocked, total)) = game.achievement_progress {
                 ui.label(format!("{}: {unlocked}/{total}", text("Получено достижений", "Unlocked achievements")));
+            }
+            if self.account.is_signed_in() && game.content.as_ref().and_then(|app| app.cloud.as_ref()).is_some() {
+                ui.separator();
+                let cloud_ready = !self.account.cloud_running() && !self.account.installing();
+                if ui.add_enabled(cloud_ready, egui::Button::new(text("Проверить Steam Cloud", "Check Steam Cloud"))).clicked() {
+                    self.account.cloud(game, cloud::Mode::Check);
+                    self.pending_cloud_sync = None;
+                }
+                if self.account.cloud_running() {
+                    ui.label(text("Работа с облаком…", "Working with cloud…"));
+                }
+                if let Some(report) = self.account.cloud_report(game.id).cloned() {
+                    ui.label(format!("{}: {}", text("Файлов в облаке", "Cloud files"), report.cloud_files));
+                    ui.label(format!("{}: {}", text("Нужна загрузка на устройство", "Need download to device"), report.pending_download));
+                    ui.label(format!("{}: {}", text("Нужна отправка в облако", "Need upload to cloud"), report.pending_upload));
+                    ui.label(format!("{}: {}", text("Конфликтов", "Conflicts"), report.conflicts.len()));
+                    ui.label(format!("{}: {} / {}", text("Выполнено: скачано / отправлено", "Completed: downloaded / uploaded"), report.downloaded, report.uploaded));
+                    for (_, error) in &report.errors {
+                        ui.label(error);
+                    }
+                    // ponytail: sync stays manual until launch lifecycle tracking can safely run it before and after play.
+                    if cloud_ready && report.errors.is_empty() && report.conflicts.is_empty() {
+                        if self.pending_cloud_sync == Some(game.id) {
+                            ui.label(format!("{}: {} / {}", text("Подтверди скачивание / отправку", "Confirm download / upload"), report.pending_download, report.pending_upload));
+                            if ui.button(text("Подтвердить синхронизацию", "Confirm sync")).clicked() {
+                                self.account.cloud(game, cloud::Mode::Sync);
+                                self.pending_cloud_sync = None;
+                            }
+                            if ui.button(text("Отмена", "Cancel")).clicked() {
+                                self.pending_cloud_sync = None;
+                            }
+                        } else if ui.button(text("Синхронизировать", "Sync")).clicked() {
+                            self.pending_cloud_sync = Some(game.id);
+                        }
+                    }
+                }
             }
             if let Some(path) = &game.install_dir {
                 if ui.button(text("Открыть папку", "Open folder")).clicked() {

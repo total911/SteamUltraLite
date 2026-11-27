@@ -163,6 +163,10 @@ pub struct SaveRule {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CloudReport {
     pub app_id: AppId,
+    #[serde(default)]
+    pub pending_download: u32,
+    #[serde(default)]
+    pub pending_upload: u32,
     pub downloaded: u32,
     pub uploaded: u32,
     pub up_to_date: u32,

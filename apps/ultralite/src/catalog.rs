@@ -140,6 +140,7 @@ fn parse_game(id: u32, metadata: &str) -> Option<Game> {
         kind,
         install_dir: info.obj("config").and_then(|config| config.str("installdir")).unwrap_or_default().to_owned(),
         depots: parse_depots(info),
+        cloud: parse_cloud(info),
         branches: info.path(&["depots", "branches"]).into_iter().flat_map(vdf::Obj::iter)
             .filter_map(|(name, value)| {
                 let branch = value.as_obj()?;
@@ -152,6 +153,31 @@ fn parse_game(id: u32, metadata: &str) -> Option<Game> {
         ..Default::default()
     });
     Some(game)
+}
+
+fn parse_cloud(info: &vdf::Obj) -> Option<model::CloudConfig> {
+    let ufs = info.obj("ufs")?;
+    let quota = ufs.u64("quota").unwrap_or(0);
+    let save_files: Vec<model::SaveRule> = ufs.obj("savefiles").into_iter().flat_map(vdf::Obj::iter)
+        .filter_map(|(_, value)| {
+            let rule = value.as_obj()?;
+            let platforms: Vec<_> = rule.obj("platforms").into_iter().flat_map(vdf::Obj::iter)
+                .filter_map(|(_, value)| value.as_str()).collect();
+            if !platforms.is_empty() && !platforms.iter().any(|platform| platform.eq_ignore_ascii_case("windows") || platform.eq_ignore_ascii_case("all")) {
+                return None;
+            }
+            Some(model::SaveRule {
+                root: rule.str("root").unwrap_or_default().to_owned(),
+                path: rule.str("path").unwrap_or_default().to_owned(),
+                pattern: rule.str("pattern").unwrap_or("*").to_owned(),
+                recursive: rule.str("recursive") == Some("1"),
+            })
+        }).collect();
+    (quota > 0 || !save_files.is_empty()).then_some(model::CloudConfig {
+        quota,
+        max_files: ufs.u64("maxnumfiles").unwrap_or(0) as u32,
+        save_files,
+    })
 }
 
 pub fn parse_depots(info: &vdf::Obj) -> Vec<model::DepotInfo> {
@@ -286,5 +312,15 @@ mod tests {
         let content = parse_game(42, depot).unwrap().content.unwrap();
         assert_eq!(content.install_dir, "Example");
         assert_eq!(content.depots[0].manifest("public"), Some((456, 1024)));
+        let cloud = r#""appinfo" { "common" { "type" "Game" "name" "Cloud game" }
+            "ufs" { "quota" "1048576" "savefiles" {
+                "0" { "root" "WinAppDataLocalLow" "path" "Saves" "pattern" "*.sav"
+                    "recursive" "1" "platforms" { "0" "windows" } }
+                "1" { "root" "MacHome" "path" "Saves" "pattern" "*"
+                    "platforms" { "0" "macos" } } } } }"#;
+        let cloud = parse_game(42, cloud).unwrap().content.unwrap().cloud.unwrap();
+        assert_eq!(cloud.quota, 1_048_576);
+        assert_eq!(cloud.save_files.len(), 1);
+        assert_eq!(cloud.save_files[0].root, "WinAppDataLocalLow");
     }
 }

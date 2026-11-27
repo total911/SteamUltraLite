@@ -22,6 +22,8 @@ local.workspace = true
 depot.workspace = true
 fs4 = "1"
 tracing.workspace = true
+directories.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }
 serde.workspace = true
 serde_json.workspace = true
 flate2.workspace = true
