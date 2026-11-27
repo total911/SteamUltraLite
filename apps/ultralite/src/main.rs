@@ -238,8 +238,12 @@ impl App {
                     }
                 }
             }
-            ui.add_enabled(false, egui::Button::new(text("Запустить", "Launch")))
-                .on_disabled_hover_text(text("Добавляется на этапе запуска игр", "Available after game launch is implemented"));
+            let can_launch = game.install_dir.as_ref().is_some_and(|path| path.is_dir());
+            if ui.add_enabled(can_launch, egui::Button::new(text("Запустить через Steam", "Launch through Steam"))).clicked() {
+                if open::that_detached(format!("steam://run/{}", game.id)).is_err() {
+                    self.problem = Some(text("Не удалось открыть Steam", "Could not open Steam").into());
+                }
+            }
             let can_remove = game.install_dir.is_some() && game.library_root.is_some()
                 && self.remove_task.is_none() && !self.account.installing();
             if self.pending_remove == Some(game.id) {
